@@ -1,0 +1,4 @@
+# build.sh: Maven cache + extracted graylog.jar, build output, the built jar (publish it as a release asset)
+.build/
+target/
+dist/

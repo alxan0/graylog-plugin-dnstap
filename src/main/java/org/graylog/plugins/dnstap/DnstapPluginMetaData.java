@@ -25,7 +25,7 @@ public class DnstapPluginMetaData implements PluginMetaData {
 
     @Override
     public String getAuthor() {
-        return "graylog-upgrade lab (rewrite of Sergey I. Yarkin's graylog-plugin-dnstap)";
+        return "alxan0 (rewrite of Sergey I. Yarkin's graylog-plugin-dnstap)";
     }
 
     @Override
