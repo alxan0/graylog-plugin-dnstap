@@ -1,5 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -16,8 +17,8 @@ final class FstrmMetrics {
     final Counter ready;           // READY control frames (bidirectional handshakes)
     final Counter start;           // START control frames (streams started)
     final Counter stop;            // STOP control frames (orderly stream ends, e.g. BIND reload/shutdown)
-    final Counter framingErrors;   // corrupt/oversized frames: the connection was closed
-    final Histogram frameSize;     // bytes per data frame
+    final Counter framingErrors;   // corrupt/oversized frames or a refused content type: the connection was closed
+    final Histogram frameSize;     // bytes per data frame, sampled 1 in 32
 
     FstrmMetrics(MetricRegistry registry) {
         frames = registry.counter("fstrm.frames");
@@ -28,7 +29,7 @@ final class FstrmMetrics {
         frameSize = registry.histogram("fstrm.frameSize");
     }
 
-    /** For tests and tools that don't need metrics. */
+    /** Metrics in a throwaway registry, for tests and tools that don't need them. */
     static FstrmMetrics unregistered() {
         return new FstrmMetrics(new MetricRegistry());
     }

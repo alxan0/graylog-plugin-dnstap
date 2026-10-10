@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the plugin against the exact graylog.jar of graylog/graylog:$GRAYLOG_VERSION (default 7.1.10),
-# inside a Maven + JDK 21 container. Output: dist/graylog-plugin-dnstap-<version>.jar
+# Builds the plugin against the exact graylog.jar of graylog/graylog:$GRAYLOG_VERSION (default 7.1.10) inside a
+# Maven + JDK 21 container. Output: dist/graylog-plugin-dnstap-<version>.jar. The jar and Maven's repository are
+# cached in .build/.
 #   ./build.sh            build + unit tests
 #   ./build.sh bench      also run the codec throughput micro-benchmark
 #   ./build.sh analyze    also run Error Prone, SpotBugs + FindSecBugs and PMD (findings are reported, not fatal)
@@ -19,11 +20,12 @@ case ${1:-} in
   bench) extra=(-Dbench=true) ;;
   analyze) extra=(-Panalysis) goal=verify ;;
 esac
-[ -n "${FUZZ_ITERATIONS:-}" ] && extra+=("-Dfuzz.iterations=$FUZZ_ITERATIONS")   # e.g. FUZZ_ITERATIONS=3000000 ./build.sh
+[ -n "${FUZZ_ITERATIONS:-}" ] && extra+=("-Dfuzz.iterations=$FUZZ_ITERATIONS")
 docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/src" -w /src "$MVN_IMAGE" sh -ec "
   mvn -q -B -Dmaven.repo.local=/src/.build/m2 install:install-file -Dfile=.build/graylog-$V.jar \
       -DgroupId=org.graylog2 -DartifactId=graylog-server-bundle -Dversion=$V -Dpackaging=jar
   mvn -B -ntp -Dmaven.repo.local=/src/.build/m2 -Dgraylog.version=$V ${extra[*]:-} clean $goal"
+# only this build's jar in dist/: two jars of the same plugin would conflict
 rm -f dist/*.jar
-cp "target/graylog-plugin-dnstap-$(sed -n "0,/<version>/s/.*<version>\(.*\)<\/version>.*/\1/p" pom.xml).jar" dist/   # only this build: two jars of the same plugin would conflict
+cp "target/graylog-plugin-dnstap-$(sed -n "0,/<version>/s/.*<version>\(.*\)<\/version>.*/\1/p" pom.xml).jar" dist/
 ls -l dist/

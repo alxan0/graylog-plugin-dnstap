@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -29,7 +29,7 @@ final class DnstapFrame {
     String identity;
     String version;
     int dnstapType;
-    // Message
+    // Dnstap.message; -1 marks an absent port, time or DNS message
     boolean hasMessage;
     int messageType;
     int socketFamily;
@@ -43,13 +43,14 @@ final class DnstapFrame {
     long responseTimeSec = -1;
     int responseTimeNsec;
     byte[] queryZone;
-    // DNS messages are kept as (offset, length) into the frame buffer: no copy
+    // DNS messages as (offset, length) into the payload: not copied
     byte[] buf;
     int queryMessageOffset = -1;
     int queryMessageLength;
     int responseMessageOffset = -1;
     int responseMessageLength;
 
+    /** Decodes one dnstap payload, skipping unknown fields; malformed protobuf throws MalformedDnstapException. */
     static DnstapFrame parse(byte[] payload) {
         final DnstapFrame f = new DnstapFrame();
         f.buf = payload;
@@ -112,7 +113,7 @@ final class DnstapFrame {
         return messageType % 2 == 0; // *_RESPONSE types are the even ones
     }
 
-    /** Events where the query address is a DNS client and the response address is this server. */
+    /** Whether the query address is a DNS client and the response address the server that logged the event. */
     boolean isClientSide() {
         return switch (messageType) {
             case AUTH_QUERY, AUTH_RESPONSE, CLIENT_QUERY, CLIENT_RESPONSE, UPDATE_QUERY, UPDATE_RESPONSE -> true;
@@ -124,7 +125,7 @@ final class DnstapFrame {
         return new String(b, StandardCharsets.UTF_8);
     }
 
-    // ---- names, as in dnstap.proto and dnstap-read's short codes
+    // names as in dnstap.proto; short codes as printed by dnstap-read
     private static final String[] TYPES = {null, "AUTH_QUERY", "AUTH_RESPONSE", "RESOLVER_QUERY", "RESOLVER_RESPONSE",
             "CLIENT_QUERY", "CLIENT_RESPONSE", "FORWARDER_QUERY", "FORWARDER_RESPONSE", "STUB_QUERY", "STUB_RESPONSE",
             "TOOL_QUERY", "TOOL_RESPONSE", "UPDATE_QUERY", "UPDATE_RESPONSE"};

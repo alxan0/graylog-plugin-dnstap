@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import com.codahale.metrics.MetricRegistry;
@@ -31,7 +35,7 @@ class MetricsTest {
         assertEquals(0, r.counter("fstrm.errors.framing").getCount());
 
         final EmbeddedChannel bad = new EmbeddedChannel(new FstrmFrameDecoder(1024, m));
-        bad.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0x10, 0}));
+        bad.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0x10, 0}));   // data frame of 4096 bytes > the 1024 limit
         assertEquals(1, r.counter("fstrm.errors.framing").getCount());
         org.junit.jupiter.api.Assertions.assertFalse(bad.isOpen());
     }
@@ -47,7 +51,7 @@ class MetricsTest {
         final String base = "org.graylog.plugins.dnstap.DnstapCodec.unknown";   // no input on this node in a unit test
         assertEquals(223, r.meter(base + ".types.CQ").getCount());
         assertEquals(230, r.meter(base + ".types.CR").getCount());
-        assertEquals(52, r.meter(base + ".skipped").getCount());
+        assertEquals(52, r.meter(base + ".skipped").getCount());   // 26 UQ + 26 UR
         assertEquals((629 - 52) / 32, r.histogram(base + ".eventLagMs").getCount());   // sampled 1 in 32
         // the capture is from the past, so every lag is positive and large
         assertTrue(r.histogram(base + ".eventLagMs").getSnapshot().getMin() > 0);

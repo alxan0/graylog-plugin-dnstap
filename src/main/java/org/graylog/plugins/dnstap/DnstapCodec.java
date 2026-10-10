@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -52,13 +52,14 @@ public class DnstapCodec extends AbstractCodec {
     static final String CK_INCLUDE_ANSWERS = "include_answers";
     static final String CK_SKIP_TYPES = "skip_message_types";
 
+    // characters; at most 3 UTF-8 bytes each, so "answers" stays below OpenSearch's 32766-byte term limit
     static final int MAX_ANSWERS_TEXT = 8192;
     static final long MAX_CLOCK_SKEW_MS = 7L * 24 * 3600 * 1000;
     private static final int MAX_CACHED_SKIP_LISTS = 32;
     private static final Splitter TYPE_LIST = Splitter.onPattern("[,\\s]+").omitEmptyStrings().trimResults();
 
-    // Graylog creates a NEW codec instance for every message (DecodingProcessor: factory.create(raw.getCodecConfig())),
-    // so everything that should be computed once lives in static caches: per-input metrics, parsed "skip" lists.
+    // Graylog creates a new codec instance for every message (DecodingProcessor: factory.create(raw.getCodecConfig())),
+    // so everything computed once lives in static caches: per-input metrics and parsed skip lists.
     private static final ConcurrentMap<MetricRegistry, ConcurrentMap<String, CodecMetrics>> METRICS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Set<String>> SKIP_TYPES = new ConcurrentHashMap<>();
 
@@ -69,13 +70,15 @@ public class DnstapCodec extends AbstractCodec {
     private final String overrideSource;
 
     /**
-     * Per-input codec metrics, next to Graylog's own codec metrics for the input
+     * Per-input codec metrics, under the same prefix as Graylog's own codec metrics for the input
      * ({@code org.graylog.plugins.dnstap.DnstapCodec.<input id>.parseTime / .failures}):
-     * {@code eventLagMs} (processing time minus the DNS event's time: grows when the relay, BIND's queue or Graylog's
-     * journal buffer), {@code skipped} (dropped by "Skip message types"), {@code nonMessage}, {@code types.<CQ|CR|...>}.
+     * {@code eventLagMs} (processing time minus the DNS event's time; grows when messages wait in the relay, BIND's
+     * queue or Graylog's journal), {@code skipped} (dropped by "Skip message types"), {@code nonMessage} (dnstap
+     * frames without a DNS message) and {@code types.<CQ|CR|...>}.
      */
     private static final class CodecMetrics {
-        static final int LAG_SAMPLE_EVERY = 32;   // the lag histogram's reservoir is synchronised: sample it
+        // The lag histogram's reservoir is synchronised, so only 1 in N messages updates it. A power of two (mask).
+        static final int LAG_SAMPLE_EVERY = 32;
         final Histogram eventLagMs;
         final Meter skipped;
         final Meter nonMessage;
@@ -97,7 +100,7 @@ public class DnstapCodec extends AbstractCodec {
             Meter m = types.get(i);
             if (m == null) {
                 m = registry.meter(name(base, "types", i == 0 ? "other" : DnstapFrame.typeShort(i)));
-                types.set(i, m);   // a race only looks up the same registry meter twice
+                types.set(i, m);   // harmless race: the registry returns the same meter to both threads
             }
             m.mark();
         }
@@ -125,12 +128,12 @@ public class DnstapCodec extends AbstractCodec {
         final CodecMetrics metrics = metrics(rawMessage);
         final DnstapFrame f;
         final DnsMessage dns;
-        final boolean parsedResponse;     // the DNS message parsed is the response (else the query, or none)
+        final boolean parsedResponse;     // dns is the response message (else the query message, or null)
         try {
             f = DnstapFrame.parse(rawMessage.getPayload());
             if (f.dnstapType != DnstapFrame.DNSTAP_TYPE_MESSAGE || !f.hasMessage) {
                 metrics.nonMessage.mark();
-                return Optional.empty(); // not a DNS message (dnstap reserves other types)
+                return Optional.empty(); // not a DNS message: dnstap reserves other types
             }
             if (!skipTypes.isEmpty() && (skipTypes.contains(DnstapFrame.typeShort(f.messageType))
                     || skipTypes.contains(DnstapFrame.typeName(f.messageType)))) {
@@ -148,8 +151,8 @@ public class DnstapCodec extends AbstractCodec {
         } catch (MalformedDnstapException e) {
             throw InputProcessingException.create("Couldn't decode dnstap frame: " + e.getMessage(), e, rawMessage);
         } catch (RuntimeException e) {
-            // last line of defence: a parser bug must surface as an input failure for this one frame,
-            // not as an unexpected exception in Graylog's processing
+            // last line of defence: a parser bug fails only this frame, as an input failure, instead of
+            // escaping into Graylog's processing
             throw InputProcessingException.create("Couldn't decode dnstap frame: " + e, e, rawMessage);
         }
         try {
@@ -168,7 +171,7 @@ public class DnstapCodec extends AbstractCodec {
         final String queryIp = ip(f.queryAddress);
         final String responseIp = ip(f.responseAddress);
 
-        // Event time: when the response was sent/received for *_RESPONSE, else when the query was.
+        // event time: when the response was sent/received for *_RESPONSE, else when the query was
         DateTime ts;
         if (response && f.responseTimeSec >= 0) {
             ts = time(f.responseTimeSec, f.responseTimeNsec);
@@ -177,7 +180,8 @@ public class DnstapCodec extends AbstractCodec {
         } else {
             ts = raw.getTimestamp();
         }
-        // sanity: an event time more than 7 days away from when it was received is not trusted as the timestamp
+        // An event time more than MAX_CLOCK_SKEW_MS (7 days) from the receive time is not trusted: the receive
+        // time becomes the timestamp and the event time goes into dnstap_event_time_suspect.
         DateTime suspect = null;
         if (raw.getTimestamp() != null && Math.abs(ts.getMillis() - raw.getTimestamp().getMillis()) > MAX_CLOCK_SKEW_MS) {
             suspect = ts;
@@ -225,7 +229,7 @@ public class DnstapCodec extends AbstractCodec {
             try {
                 m.addField("query_zone", DnsMessage.parse(zoneAsMessage(f.queryZone), 0, 12 + f.queryZone.length + 4, false).qname);
             } catch (MalformedDnstapException ignored) {
-                // optional field
+                // optional field: a bad zone name only drops query_zone
             }
         }
         if (dns != null) {
@@ -281,10 +285,10 @@ public class DnstapCodec extends AbstractCodec {
     }
 
     /**
-     * Drops this plugin's codec metrics of an input from the registry and the cache. Graylog removes an input's own
-     * metrics when it stops, but not these (they are registered by the codec, not by the input), so without this every
-     * input ever created on the node would keep its metrics until the JVM exits. Graylog's own codec metrics under the
-     * same prefix ({@code parseTime}, {@code failures}) are left alone.
+     * Removes this plugin's codec metrics of an input from the registry and the cache. Graylog removes an input's own
+     * metrics when it stops, but not these, which the codec registers; without this, every input ever created on the
+     * node would keep them until the JVM exits. Graylog's codec metrics under the same prefix ({@code parseTime},
+     * {@code failures}) are left alone.
      */
     static void removeMetrics(MetricRegistry registry, String inputId) {
         final ConcurrentMap<String, CodecMetrics> byInput = METRICS.get(registry);
@@ -302,7 +306,7 @@ public class DnstapCodec extends AbstractCodec {
         return s.length() > MAX_ANSWERS_TEXT ? s.substring(0, MAX_ANSWERS_TEXT) + "…" : s;
     }
 
-    /** query_zone is a wire-format name; wrap it in a fake 1-question message to reuse the name parser. */
+    /** Wraps the wire-format query_zone name in a one-question DNS message, so DnsMessage can parse it. */
     private static byte[] zoneAsMessage(byte[] wireName) {
         final byte[] msg = new byte[12 + wireName.length + 4];
         msg[5] = 1; // qdcount = 1
@@ -330,7 +334,7 @@ public class DnstapCodec extends AbstractCodec {
             return Set.of();
         }
         if (SKIP_TYPES.size() > MAX_CACHED_SKIP_LISTS) {
-            SKIP_TYPES.clear();   // only edited settings add entries; keep the cache from growing without bound
+            SKIP_TYPES.clear();   // only edits of the setting add entries: keep the cache bounded
         }
         return SKIP_TYPES.computeIfAbsent(configured, DnstapCodec::parseTypes);
     }
@@ -355,8 +359,8 @@ public class DnstapCodec extends AbstractCodec {
     public static class Config extends AbstractCodec.Config {
         @Override
         public ConfigurationRequest getRequestedConfiguration() {
-            // dnstap is binary protobuf: a text encoding means nothing here (and a bad value would fail every message).
-            // Built from the parent's fields instead of ConfigurationRequest.removeField(), which is deprecated.
+            // No charset field: dnstap is binary, and a bad value would fail every message. Copied from the
+            // parent's fields because ConfigurationRequest.removeField() is deprecated.
             final ConfigurationRequest cr = new ConfigurationRequest();
             super.getRequestedConfiguration().getFields().forEach((key, field) -> {
                 if (!org.graylog2.plugin.inputs.codecs.Codec.Config.CK_CHARSET_NAME.equals(key)) {

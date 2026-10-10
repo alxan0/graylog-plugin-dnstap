@@ -1,11 +1,12 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
-import io.netty.handler.codec.CorruptedFrameException;
-import io.netty.handler.codec.DecoderException;
-import io.netty.handler.codec.TooLongFrameException;
 import org.graylog2.plugin.configuration.Configuration;
 import org.graylog2.plugin.inputs.failure.InputProcessingException;
 import org.graylog2.plugin.journal.RawMessage;
@@ -19,18 +20,17 @@ import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Robustness against corrupt and hostile input. Seeded, so every failure is reproducible:
- * the message names the seed, the iteration and the input bytes.
+ * Robustness against corrupt and hostile input. Seeded (-Dfuzz.seed), so every failure is reproducible: the
+ * failure message names the seed, the iteration and the input bytes.
  * <ul>
- *   <li>The codec may only return a message / Optional.empty() or throw InputProcessingException
- *       (Graylog's error path), never anything else, and never slowly.</li>
- *   <li>The frame decoder may only fail with CorruptedFrameException/TooLongFrameException, must reject
- *       oversized frames from their 4-byte header (no buffering), and must close the connection.</li>
+ *   <li>The codec may only return a message or Optional.empty(), or throw InputProcessingException (Graylog's
+ *       error path); nothing else, and never slowly.</li>
+ *   <li>The frame decoder handles framing errors itself (nothing is thrown), rejects oversized frames from
+ *       their 4-byte header without buffering them, and closes the connection.</li>
  * </ul>
  * Iterations: -Dfuzz.iterations=N (default 300000 codec mutations, 20000 decoder streams).
  */
@@ -95,11 +95,11 @@ class FuzzTest {
     @Test
     void hostileDnsMessagesAreRejected() {
         final DnstapCodec c = codec();
-        // DNS header (qdcount=1) + a question name that is a compression pointer to itself (offset 12)
+        // DNS header (qdcount=1), then a question name that is a compression pointer to itself (offset 12)
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd0100000100000000000" + "0" + "c00c00010001")), "self pointer"), "self pointer");
-        // two pointers pointing at each other
+        // two pointers at each other (offsets 12 and 14)
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd01000001000000000000" + "c00e" + "c00c" + "00010001")), "pointer loop"), "pointer loop");
-        // label length running past the end
+        // label length 63 with only 3 bytes left
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd01000001000000000000" + "3f616263")), "label overflow"), "label overflow");
         // header only, qdcount=65535
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd0100ffff000000000000")), "qdcount without questions"), "qdcount without questions");
@@ -114,7 +114,7 @@ class FuzzTest {
     void decoderRejectsOversizedFrameFromItsHeader() {
         final com.codahale.metrics.MetricRegistry r = new com.codahale.metrics.MetricRegistry();
         final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20, new FstrmMetrics(r)));
-        // a header announcing 2 GiB: must fail immediately, without waiting for (or buffering) the payload
+        // a header announcing 2 GiB - 1: must fail at once, without waiting for (or buffering) the payload
         ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0x7f, -1, -1, -1}));
         assertFalse(ch.isOpen(), "the connection is closed after a framing error");
         assertEquals(1, r.counter("fstrm.errors.framing").getCount());
@@ -163,7 +163,6 @@ class FuzzTest {
         System.out.println("decoder fuzz: frames=" + frames + " rejected streams=" + rejected);
     }
 
-    // ---- helpers
     private static byte[] mutate(byte[] src, Random rnd) {
         byte[] b = src.clone();
         final int n = 1 + rnd.nextInt(8);
@@ -204,7 +203,7 @@ class FuzzTest {
             switch (rnd.nextInt(5)) {
                 case 0 -> { final int len = rnd.nextInt(200); out.writeInt(len); final byte[] p = new byte[len]; rnd.nextBytes(p); out.writeBytes(p); }
                 case 1 -> out.writeInt(rnd.nextInt());                                         // random header
-                case 2 -> { out.writeInt(0).writeInt(4 + rnd.nextInt(40)).writeInt(1 + rnd.nextInt(5)); } // control-ish
+                case 2 -> { out.writeInt(0).writeInt(4 + rnd.nextInt(40)).writeInt(1 + rnd.nextInt(5)); } // control frame header
                 case 3 -> { final byte[] p = new byte[rnd.nextInt(64)]; rnd.nextBytes(p); out.writeBytes(p); }
                 default -> out.writeInt(0x00100000 + rnd.nextInt(1 << 20));                    // big frame header
             }
@@ -220,26 +219,11 @@ class FuzzTest {
 
     /** dnstap{type=MESSAGE, message{type=CLIENT_QUERY, query_message=dns}} */
     private static byte[] dnstapWithQuery(byte[] dns) {
-        return dnstap(5, 10, dns);
+        return FuzzTestAccess.dnstap(5, 10, dns);
     }
 
+    /** dnstap{type=MESSAGE, message{type=CLIENT_RESPONSE, response_message=dns}} */
     private static byte[] dnstapWithResponse(byte[] dns) {
-        return dnstap(6, 14, dns);
-    }
-
-    private static byte[] dnstap(int messageType, int dnsField, byte[] dns) {
-        final java.io.ByteArrayOutputStream msg = new java.io.ByteArrayOutputStream();
-        msg.write(0x08); msg.write(messageType);                 // field 1 varint: type
-        msg.write(dnsField << 3 | 2); varint(msg, dns.length); msg.writeBytes(dns);
-        final byte[] m = msg.toByteArray();
-        final java.io.ByteArrayOutputStream top = new java.io.ByteArrayOutputStream();
-        top.write(15 << 3); top.write(1);                        // field 15 varint: MESSAGE
-        top.write(14 << 3 | 2); varint(top, m.length); top.writeBytes(m);
-        return top.toByteArray();
-    }
-
-    private static void varint(java.io.ByteArrayOutputStream o, int v) {
-        while ((v & ~0x7F) != 0) { o.write((v & 0x7F) | 0x80); v >>>= 7; }
-        o.write(v);
+        return FuzzTestAccess.dnstap(6, 14, dns);
     }
 }

@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import com.codahale.metrics.MetricRegistry;
@@ -19,7 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression tests for the fixes from the 7.1.10 compatibility review (1.0.3). */
+/** Edge cases of the Frame Streams handshake, the message fields and the size limits. */
 class ReviewFixesTest {
     private static DnstapCodec codec() {
         return new DnstapCodec(new Configuration(Map.of()), TestMessages.factory(), new MetricRegistry());
@@ -47,7 +51,7 @@ class ReviewFixesTest {
 
     @Test
     void hugeTxtAnswersAreCapped() {
-        // response, 1 question (www IN TXT), 1 answer: TXT rdata with 200 strings of 255 bytes (~51 KiB)
+        // response, 1 question (www IN TXT), 1 answer: TXT rdata with 200 strings of 255 'a' (51200 bytes)
         final StringBuilder rdata = new StringBuilder();
         for (int i = 0; i < 200; i++) rdata.append("ff").append("61".repeat(255));
         final int rdlen = rdata.length() / 2;
@@ -56,6 +60,7 @@ class ReviewFixesTest {
         final Message m = codec().decodeSafe(new RawMessage(dnstapResponse(HexFormat.of().parseHex(dns)),
                 new InetSocketAddress("10.0.0.1", 1))).orElseThrow();
         final String answers = (String) m.getField("answers");
+        // + 1: the "…" appended when the text is cut
         assertTrue(answers.length() <= DnstapCodec.MAX_ANSWERS_TEXT + 1, "answers capped: " + answers.length());
         assertTrue(answers.getBytes(StandardCharsets.UTF_8).length < 32766, "fits an OpenSearch keyword");
     }

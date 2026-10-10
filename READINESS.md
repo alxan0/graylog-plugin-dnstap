@@ -13,6 +13,20 @@ Every test used the **recommended setup** (see the README):
 The load came from `dnsperf` with uniquely named queries. Each query was counted exactly at every hop: dnsperf, BIND's
 counters, the input's counters, and an exact OpenSearch count by query name.
 
+## 1.0.4
+
+1.0.4 is 1.0.3 plus the fixes from static analysis and a review for long uptime (README, "Static analysis" and
+"Changelog"). It doesn't touch the data path's design; the changes are metric cleanup, keepalive, close handling and
+log sanitising. It was re-verified as follows:
+- **Unit tests:** 29 pass, including 5 new ones for the fixes.
+- **Static analysis:** Error Prone, SpotBugs + FindSecBugs and PMD; every remaining finding was reviewed.
+- **Real Graylog 7.1.10, metric cleanup:** the codec metrics are removed when the input stops and come back after a
+  restart; Graylog's own metrics stay; 200 of 200 queries were delivered afterwards.
+- **TLS test:** all 6 cases pass.
+- **Monitoring fault test:** all checks pass.
+
+The restart, throughput and soak results below are from 1.0.3. 1.0.4 changes nothing on that path.
+
 ## Verdict
 
 **Ready for production**, under the operating conditions below. Every functional, fault, restart and monitoring test

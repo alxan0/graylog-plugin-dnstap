@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import org.graylog2.plugin.Message;
@@ -14,6 +18,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/** Decoding of the BIND capture matches dnstap-read's view of it. */
 class DnstapCodecTest {
     static DnstapCodec codec(Map<String, Object> cfg) {
         return new DnstapCodec(new Configuration(cfg), TestMessages.factory(), new com.codahale.metrics.MetricRegistry());
@@ -37,7 +42,8 @@ class DnstapCodecTest {
 
     @Test
     void firstClientQueryMatchesDnstapRead() throws Exception {
-        // dnstap-read: 10-Oct-2026 17:17:04.145 CQ 127.0.0.1:45320 -> 127.0.0.1:53 UDP 53b ns1.lab.test/IN/A
+        // dnstap-read (prints local time, UTC+3):
+        // 10-Oct-2026 17:17:04.145 CQ 127.0.0.1:45320 -> 127.0.0.1:53 UDP 53b ns1.lab.test/IN/A
         final DnstapCodec c = codec(Map.of());
         final Message m = Fixture.frames().stream().map(f -> decode(c, f).orElseThrow())
                 .filter(x -> "CQ".equals(x.getField("dnstap_type_short"))).findFirst().orElseThrow();
@@ -72,6 +78,6 @@ class DnstapCodecTest {
     void skipTypesDropsMessagesAtTheCodec() throws Exception {
         final DnstapCodec c = codec(Map.of(DnstapCodec.CK_SKIP_TYPES, "CR, AQ,AR,FQ,FR,UQ,UR"));
         final long kept = Fixture.frames().stream().map(f -> decode(c, f)).filter(Optional::isPresent).count();
-        assertEquals(223, kept);
+        assertEquals(223, kept);   // only the CQ frames
     }
 }

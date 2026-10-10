@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import io.netty.buffer.ByteBuf;
@@ -12,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
+/** Frame Streams handshake and framing. */
 class FstrmFrameDecoderTest {
     @Test
     void decodesEveryFrameOfARealBindFile() throws Exception {
@@ -26,7 +31,7 @@ class FstrmFrameDecoderTest {
         final ByteBuf accept = ch.readOutbound();
         assertNotNull(accept, "READY must be answered with ACCEPT");
         assertEquals(0, accept.readInt());
-        accept.readInt();
+        accept.readInt();   // control length
         assertEquals(FstrmFrameDecoder.CONTROL_ACCEPT, accept.readInt());
         assertEquals(FstrmFrameDecoder.FIELD_CONTENT_TYPE, accept.readInt());
         final int len = accept.readInt();
@@ -34,7 +39,7 @@ class FstrmFrameDecoderTest {
         accept.release();
 
         ch.writeInbound(control(FstrmFrameDecoder.CONTROL_START, FstrmFrameDecoder.DNSTAP_CONTENT_TYPE));
-        ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 3, 1, 2, 3}));
+        ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 3, 1, 2, 3}));   // data frame: length 3, payload 1 2 3
         final ByteBuf frame = ch.readInbound();
         assertEquals(3, frame.readableBytes());
         frame.release();
@@ -42,7 +47,7 @@ class FstrmFrameDecoderTest {
         ch.writeInbound(control(FstrmFrameDecoder.CONTROL_STOP, null));
         final ByteBuf finish = ch.readOutbound();
         assertNotNull(finish, "STOP must be answered with FINISH");
-        finish.skipBytes(8);
+        finish.skipBytes(8);   // escape (0) and control length
         assertEquals(FstrmFrameDecoder.CONTROL_FINISH, finish.readInt());
         finish.release();
         assertFalse(ch.isOpen(), "channel is closed after FINISH");
@@ -51,7 +56,7 @@ class FstrmFrameDecoderTest {
     @Test
     void waitsForIncompleteFrames() {
         final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20));
-        ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 5, 1, 2}));
+        ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 5, 1, 2}));   // length 5, only 2 payload bytes
         assertNull(ch.readInbound());
         ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{3, 4, 5}));
         final ByteBuf frame = ch.readInbound();

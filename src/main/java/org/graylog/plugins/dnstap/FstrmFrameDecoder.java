@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -19,7 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Frame Streams (https://github.com/farsightsec/fstrm) receiver.
+ * Receiving side of Frame Streams (https://github.com/farsightsec/fstrm), the framing dnstap uses.
  * <pre>
  * data frame:    | length (4, big endian, > 0) | payload (length bytes) |
  * control frame: | 0 (4) | control length (4) | control type (4) | fields: (type (4) | length (4) | value)* |
@@ -27,6 +27,7 @@ import java.util.List;
  * Bidirectional streams (BIND, Unbound, dnstap tools via a socket): READY -> we answer ACCEPT -> START, data...,
  * STOP -> we answer FINISH and close. Unidirectional streams (a dnstap file piped in): START, data..., STOP.
  * Each data frame (one dnstap protobuf) is passed on as its own ByteBuf, which Graylog turns into one RawMessage.
+ * A framing error or a READY without the dnstap content type closes the connection.
  */
 public class FstrmFrameDecoder extends ByteToMessageDecoder {
     private static final Logger LOG = LoggerFactory.getLogger(FstrmFrameDecoder.class);
@@ -64,11 +65,9 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
         try {
             decodeFrames(ctx, in, out);
         } catch (CorruptedFrameException | TooLongFrameException e) {
-            // A Frame Streams connection can't resynchronise after a framing error: everything after it would be
-            // misread. Count it, log it once, discard the rest and close the connection once this decode call has
-            // returned (closing inside decode() would release the buffer Netty is still decoding from). Not
-            // rethrown: the plugin owns this case (Graylog would log a second, generic ERROR and close again).
-            // Frames decoded before the error are still delivered. The sender reconnects.
+            // Frame Streams can't resynchronise after a framing error, so the rest of the stream is discarded and the
+            // connection closed (see closeLater); frames decoded before the error are still delivered and the sender
+            // reconnects. Not rethrown: Graylog would log a second, generic ERROR and close again.
             metrics.framingErrors.inc();
             LOG.warn("Frame Streams framing error from {}, closing the connection: {}", ctx.channel().remoteAddress(), e.getMessage());
             fail(ctx, in);
@@ -80,8 +79,10 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
         closeLater(ctx);
     }
 
-    /** Stops decoding and closes the connection after the current decode() call (closing inside it would release
-     *  the buffer Netty is still decoding from). */
+    /**
+     * Stops decoding and closes the connection after the current decode() call: closing inside it would release
+     * the buffer Netty is still decoding from.
+     */
     private void closeLater(ChannelHandlerContext ctx) {
         discarding = true;
         ctx.executor().execute(() -> {
@@ -121,8 +122,9 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                 out.add(in.readRetainedSlice((int) length));
                 metrics.frames.inc();
                 sizeSample++;
+                // 1 in 32 frames: the histogram's reservoir is synchronised
                 if ((sizeSample & 31) == 0) {
-                    metrics.frameSize.update(length);   // sampled: the histogram's reservoir is synchronised
+                    metrics.frameSize.update(length);
                 }
             }
         }
@@ -135,7 +137,7 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                 metrics.ready.inc();
                 final List<String> offered = contentTypes(control);
                 if (!offered.isEmpty() && !offered.contains(DNSTAP_CONTENT_TYPE)) {
-                    // the spec: the receiver must not ACCEPT a stream whose content type it doesn't understand
+                    // fstrm: a receiver must not ACCEPT a content type it doesn't understand
                     metrics.framingErrors.inc();
                     LOG.warn("Frame Streams sender {} offers content types {} but not {}: closing", ctx.channel().remoteAddress(), offered, DNSTAP_CONTENT_TYPE);
                     closeLater(ctx);
@@ -153,9 +155,8 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
             }
             case CONTROL_STOP -> {
                 metrics.stop.inc();
-                // Nothing may follow STOP. FINISH is the receiver's answer in bidirectional mode only. Close once
-                // FINISH is written, and never inside this decode call: the write can complete synchronously on the
-                // event loop, and closing inside decode() releases the buffer being decoded.
+                // Nothing may follow STOP, and only a bidirectional sender expects FINISH. The close goes through
+                // closeLater even after FINISH: the write can complete synchronously, inside this decode call.
                 if (bidirectional) {
                     discarding = true;
                     LOG.debug("Frame Streams STOP from {}: sending FINISH", ctx.channel().remoteAddress());
@@ -169,6 +170,7 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
         }
     }
 
+    /** The content-type fields of a control frame, made printable; a truncated field ends the list. */
     private static List<String> contentTypes(ByteBuf control) {
         final List<String> types = new ArrayList<>(1);
         while (control.readableBytes() >= 8) {
@@ -185,7 +187,10 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
         return types;
     }
 
-    /** The sender chooses these bytes and they end up in log lines: no control characters (forged lines). */
+    /**
+     * Replaces characters outside printable ASCII with '?': the sender chooses these bytes and they end up in log
+     * lines, where control characters could forge lines.
+     */
     static String printable(String s) {
         final StringBuilder sb = new StringBuilder(s.length());
         for (int i = 0; i < s.length(); i++) {

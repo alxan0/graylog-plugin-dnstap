@@ -1,9 +1,10 @@
 # systemd unit for the relay on the DNS server: named's dnstap Unix socket -> Graylog Dnstap input over TLS.
 # Install as /etc/systemd/system/dnstap-relay.service, set the Graylog host and the certificate paths, then:
 #   systemctl daemon-reload && systemctl enable --now dnstap-relay
-# retry=120,interval=1 keeps named's connection waiting while Graylog restarts (with fstrm-set-input-queue-size 16384
-# this turned ~29k lost events per Graylog restart into ~31). /run/named comes from Debian's tmpfiles.d and survives
-# named restarts. On Debian/Ubuntu, named's AppArmor profile must allow the socket (see README, "BIND").
+# retry=120,interval=1 holds named's connection for up to ~2 minutes while Graylog restarts; together with
+# fstrm-set-input-queue-size 16384 it cut the events lost per Graylog restart from ~29k to ~31.
+# /run/named comes from Debian's tmpfiles.d and survives named restarts. On Debian/Ubuntu, named's AppArmor
+# profile must allow the socket (see README, "BIND").
 [Unit]
 Description=dnstap relay: named socket -> Graylog Dnstap input (TLS)
 After=network-online.target

@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -69,7 +69,7 @@ final class ProtoReader {
         return v;
     }
 
-    /** Reads the length of a length-delimited field and leaves the position at its first byte. */
+    /** Reads a length-delimited field's length, checked against the bytes left, and stops at the field's first byte. */
     int readLength() {
         final long len = readVarint();
         if (len < 0 || len > limit - pos) {
@@ -86,6 +86,7 @@ final class ProtoReader {
         return out;
     }
 
+    /** Skips a field value of the given wire type; groups (wire types 3 and 4) are rejected. */
     void skip(int wireType) {
         switch (wireType) {
             case WIRE_VARINT -> readVarint();

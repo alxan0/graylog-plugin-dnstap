@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Minimal PKI for dnstap over TLS, if you have no internal CA. Run it in an empty directory:
-#   make-dnstap-pki.sh GRAYLOG_HOSTNAME [RELAY_NAME]
-# Creates:
-#   ca.crt / ca.key           the CA (keep ca.key offline: neither server needs it)
-#   server.crt / server.key   for the Graylog Dnstap input (SAN = GRAYLOG_HOSTNAME, serverAuth, PKCS#8 key)
-#   client.crt / client.key   for the socat relay on the DNS server (clientAuth)
+#   make-dnstap-pki.sh GRAYLOG_HOSTNAME [RELAY_NAME]   (RELAY_NAME defaults to <short hostname>-dnstap)
+# Creates (RSA 2048, valid for 825 days, keys in PKCS#8):
+#   ca.crt / ca.key           the CA (keep ca.key offline: neither server needs it); ca.srl is its serial file
+#   server.crt / server.key   for the Graylog Dnstap input (SAN = GRAYLOG_HOSTNAME, an IP SAN for IPv4; serverAuth)
+#   client.crt / client.key   for the socat relay on the DNS server (CN and SAN = RELAY_NAME; clientAuth)
 set -euo pipefail
 GL=${1:?usage: $0 GRAYLOG_HOSTNAME [RELAY_NAME]}
 RELAY=${2:-$(hostname -s)-dnstap}

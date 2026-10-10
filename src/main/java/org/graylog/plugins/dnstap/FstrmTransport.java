@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -49,9 +49,9 @@ public class FstrmTransport extends AbstractTcpTransport {
                           EncryptedValueService encryptedValueService) {
         super(configuration, throughputCounter, localRegistry, eventLoopGroup, eventLoopGroupFactory,
                 nettyTransportConfiguration, tlsConfiguration, encryptedValueService);
-        // bounded: a DNS message is at most 64 KiB (+ dnstap envelope); a value of 0 or less would reject every frame
+        // clamped: a DNS message is at most 64 KiB (+ dnstap envelope); a value of 0 or less would reject every frame
         this.maxFrameSize = Math.min(MAX_MAX_FRAME_SIZE, Math.max(MIN_MAX_FRAME_SIZE, configuration.getInt(CK_MAX_FRAME_SIZE, DEFAULT_MAX_FRAME_SIZE)));
-        this.metrics = new FstrmMetrics(localRegistry);   // published under the input by Graylog
+        this.metrics = new FstrmMetrics(localRegistry);   // Graylog publishes this registry under the input
     }
 
     @Override
@@ -78,8 +78,8 @@ public class FstrmTransport extends AbstractTcpTransport {
             if (cr.containsField(CK_PORT)) {
                 cr.getField(CK_PORT).setDefaultValue(DEFAULT_PORT);
             }
-            // A relay that vanishes without a FIN/RST (host down, network cut, NAT timeout) would otherwise leave a
-            // half-open connection with its buffers here forever; keepalive lets the kernel detect and close it.
+            // A relay that vanishes without FIN/RST (host down, network cut, NAT timeout) would leave a half-open
+            // connection and its buffers here forever; keepalive lets the kernel detect and close it.
             if (cr.containsField(CK_TCP_KEEPALIVE)) {
                 cr.getField(CK_TCP_KEEPALIVE).setDefaultValue(true);
             }

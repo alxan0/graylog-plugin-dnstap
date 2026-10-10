@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import com.codahale.metrics.MetricRegistry;
@@ -17,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Regression tests for the static-analysis and long-running review (1.0.4). */
+/** Long-running safety: metric cleanup, TCP keepalive, codec config fields, log-line forging, label escaping. */
 class LongRunningSafetyTest {
     private static final String BASE = "org.graylog.plugins.dnstap.DnstapCodec.unknown";   // no input id in unit tests
 

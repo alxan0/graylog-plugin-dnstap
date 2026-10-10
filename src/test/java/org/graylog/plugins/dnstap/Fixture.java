@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import io.netty.buffer.ByteBuf;
@@ -10,7 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-/** The dnstap file captured from the bind-lab (BIND 9.20.29-1~deb13u1, mixed traffic profile). */
+/** The dnstap file captured from the bind-lab (BIND 9.20.29-1~deb13u1, mixed traffic profile): 629 frames. */
 final class Fixture {
     static final String FILE = "/bind-9.20.29.fstrm";
 

@@ -1,13 +1,22 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import java.io.ByteArrayOutputStream;
 
 /** Builds minimal dnstap protobuf payloads for tests. */
 final class FuzzTestAccess {
+    /**
+     * dnstap{type=MESSAGE, message{type=messageType, field dnsField = dns}}; dnsField is 10 (query_message) or
+     * 14 (response_message).
+     */
     static byte[] dnstap(int messageType, int dnsField, byte[] dns) {
         return dnstapWithTime(messageType, dnsField, dns, -1);
     }
 
+    /** As {@link #dnstap}, plus query_time_sec unless {@code querySec} is negative. */
     static byte[] dnstapWithTime(int messageType, int dnsField, byte[] dns, long querySec) {
         final ByteArrayOutputStream msg = new ByteArrayOutputStream();
         msg.write(0x08); varint(msg, messageType);

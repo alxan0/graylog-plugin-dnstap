@@ -1,5 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -10,6 +11,7 @@ import org.graylog2.plugin.Version;
 import java.net.URI;
 import java.util.Set;
 
+/** Plugin metadata; the versions come from graylog-plugin.properties, which Maven fills in from the pom. */
 public class DnstapPluginMetaData implements PluginMetaData {
     private static final String PLUGIN_PROPERTIES = "org.graylog.plugins.dnstap.graylog-plugin-dnstap/graylog-plugin.properties";
 

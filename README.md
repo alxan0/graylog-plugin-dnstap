@@ -10,7 +10,7 @@ syslog/UDP, measured on the same lab:
 - **~1.5× the end-to-end throughput** over plain TCP; about equal with TLS, where Graylog is the limit
 - a Graylog restart costs **~31 events instead of ~27,000**, with the recommended relay settings
 
-Version **1.0.3**, built and tested against **Graylog 7.1.10** and **BIND 9.20** (Debian 13). See
+Version **1.0.4**, built and tested against **Graylog 7.1.10** and **BIND 9.20** (Debian 13). See
 [READINESS.md](READINESS.md) for the full test results.
 
 This is a rewrite of [sega-yarkin/graylog-plugin-dnstap](https://github.com/sega-yarkin/graylog-plugin-dnstap)
@@ -18,7 +18,7 @@ This is a rewrite of [sega-yarkin/graylog-plugin-dnstap](https://github.com/sega
 The original can't load on Graylog 7.x. It uses Netty 3, `javax.inject`, the Graylog 2.x codec and input APIs and
 protobuf 3.0.
 
-| | Original 0.0.2 | This plugin 1.0.3 |
+| | Original 0.0.2 | This plugin 1.0.4 |
 |---|---|---|
 | Graylog API | 2.x (Netty 3, `javax.inject`, `new Message(...)`) | 7.1 (Netty 4 `AbstractTcpTransport`, `jakarta.inject`, `MessageFactory`, `decodeSafe` + `InputProcessingException`) |
 | Frame Streams | READY → ACCEPT; STOP ignored | full handshake (READY/ACCEPT/START/STOP/FINISH), unidirectional streams, content-type check, frame size limit |
@@ -40,6 +40,7 @@ protobuf 3.0.
 - [Performance and sizing](#performance-and-sizing)
 - [Build from source](#build-from-source)
 - [Tests](#tests)
+- [Static analysis](#static-analysis)
 - [Changelog](#changelog)
 - [License](#license)
 
@@ -54,12 +55,12 @@ Frame Streams handshake passes through it unchanged. The relay runs on the DNS s
 
 ## Install on Graylog
 
-Download `graylog-plugin-dnstap-1.0.3.jar` from the releases, or [build it](#build-from-source).
+Download `graylog-plugin-dnstap-1.0.4.jar` from the releases, or [build it](#build-from-source).
 
 1. Copy the jar to the plugin directory on **every Graylog node**: `plugin_dir` in `server.conf`, normally
    `/usr/share/graylog-server/plugin/` for package installs and `/usr/share/graylog/plugin/` in the Docker image.
    Keep **only one** jar of this plugin there; two versions of the same plugin conflict at startup.
-2. Restart Graylog. The log shows `Loaded plugin: Dnstap Input 1.0.3`.
+2. Restart Graylog. The log shows `Loaded plugin: Dnstap Input 1.0.4`.
 3. For TLS (recommended), put the server certificate, its key (PKCS#8 PEM) and the CA certificate somewhere the
    `graylog` user can read, e.g. `/etc/graylog/server/dnstap-tls/`. No internal CA? Use
    [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) `graylog.example.org`. It creates the CA, the server
@@ -134,6 +135,7 @@ Besides Graylog's usual bind address, port, TLS, receive buffer, worker threads 
 | Maximum frame size | 1 MiB | clamped to 65,535 + 1,024 B … 16 MiB; a bigger frame is a framing error and closes the connection |
 | Include answers | on | the `answers` field of responses (capped at 8 KiB of text, each rdata at 256 characters) |
 | Skip message types | empty | e.g. `CR,AR`: dropped at the input, counted in the `skipped` metric |
+| TCP keepalive (Graylog's setting) | **on** for new inputs | lets the kernel close connections whose relay vanished without closing them (host down, network cut). Inputs created with 1.0.3 or older keep their stored value: enable it there |
 
 ## Fields
 
@@ -175,7 +177,7 @@ All metrics are under *System → Nodes → Metrics* and `GET /api/system/metric
 Notes on these metrics:
 - A lag p95 of about **1 s at low rates is normal**: named sends a partly filled buffer once per
   `fstrm-set-output-flush-timeout` (default 1 s).
-- Counters restart at 0 when the input restarts.
+- Counters restart at 0 when the input restarts. When an input is stopped or deleted, its metrics are removed.
 - Also watch BIND's `DNSTAPdropped` counter (statistics channel, `/xml/v3/server`): frames named dropped because its
   queue was full.
 
@@ -247,12 +249,13 @@ delay. Storage is about 200 bytes per event in OpenSearch.
 ```
 - Needs only Docker: the build runs Maven + JDK 21 in `maven:3.9.9-eclipse-temurin-21`.
 - It extracts `graylog.jar` from the `graylog/graylog:7.1.10` image, compiles against it and runs the unit tests.
-- Output: `dist/graylog-plugin-dnstap-1.0.3.jar`.
+- Output: `dist/graylog-plugin-dnstap-1.0.4.jar`.
 
 Variants:
 - `./build.sh bench` adds the codec throughput micro-benchmark.
 - `FUZZ_ITERATIONS=3000000 ./build.sh` fuzzes longer (default 300,000).
 - `GRAYLOG_VERSION=7.1.x ./build.sh` builds against another 7.1 image.
+- `./build.sh analyze` also runs the static analysers (see [Static analysis](#static-analysis)).
 
 Layout (`src/main/java/org/graylog/plugins/dnstap/`):
 
@@ -292,7 +295,50 @@ of this repository):
 
 Results and findings are in [READINESS.md](READINESS.md).
 
+## Static analysis
+`./build.sh analyze` runs three tools on top of the normal build and tests. They report findings without failing the build:
+- **Error Prone** checks bug patterns at compile time, together with `javac -Xlint:all`.
+- **SpotBugs** with **FindSecBugs** analyses the bytecode for bugs and security issues.
+- **PMD** checks the source, including copy-paste detection.
+
+Their reports are in `target/spotbugsXml.xml` and `target/pmd.xml`.
+
+The first run on 1.0.3 reported 10 SpotBugs, 11 Error Prone/javac and 61 PMD findings. Version 1.0.4 fixes every real one: an
+ignored write future, sender data in log lines, unread fields, a duplicate branch, a lost exception cause, a deprecated
+API and style issues. That leaves 7 SpotBugs, 3 Error Prone and 5 PMD findings, each reviewed and kept on purpose:
+
+| Finding | Why it stays |
+|---|---|
+| SpotBugs `EI_EXPOSE_REP2`: storing the injected `MetricRegistry` | it's Graylog's shared registry; holding the reference is the point |
+| FindSecBugs `CRLF_INJECTION_LOGS` in `FstrmFrameDecoder` | the remaining logged values are the peer address, the plugin's own numeric messages, and content types already stripped of control characters (`printable()`), which the tool can't see |
+| PMD `GuardLogStatement` | SLF4J parameterized calls with cheap arguments; the one costly argument is guarded |
+| Error Prone `NonApiType` / PMD `LooseCoupling` (`LinkedHashMap`) | the type is fixed by the Graylog method being overridden |
+| Error Prone `NonCanonicalType` (`AbstractCodec.Factory`) | the form Graylog's own codecs use |
+| Error Prone `FutureReturnValueIgnored` in `FuzzTest` | closing a test channel during teardown; nothing to check |
+
+On top of the tools, a review looked for problems that only show up after long uptime or many configuration changes
+(fixed in 1.0.4, covered by `LongRunningSafetyTest`):
+- codec metrics and a static cache entry that outlived every deleted input
+- half-open connections without keepalive
+- an unbounded cache keyed by configuration text
+- a data race in the per-type meters
+
+The metric cleanup was also checked in a real Graylog 7.1.10. While the input runs, the plugin's metrics exist. After a
+stop only Graylog's own remain, and after a restart the plugin's come back, with 200 of 200 test queries delivered.
+
+The 1 h soak (see READINESS.md) showed no growth in heap, threads, file descriptors or RSS.
+
 ## Changelog
+**1.0.4** brings fixes from static analysis and a review for long uptime:
+- When an input is stopped or deleted, its codec metrics are removed. Before, they stayed in Graylog's registry until
+  restart, with a cache entry for every input ever created.
+- New inputs have TCP keepalive on, so half-open connections get closed.
+- A failed ACCEPT write closes the connection.
+- Sender-supplied content types are sanitised before logging.
+- The skip-types cache is bounded, and the per-type meters are free of data races.
+- Undecodable frames keep their cause, and the plugin no longer uses the deprecated `ConfigurationRequest.removeField()`.
+- Code cleanup. 29 unit tests.
+
 **1.0.3** fixes from a review against the Graylog 7.1.10 sources:
 - A framing error is counted, logged once and closed by the plugin. Before, it was rethrown, so Graylog logged a
   second ERROR.

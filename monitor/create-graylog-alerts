@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Create (or update) Graylog-native alerting for a dnstap stream, idempotent by title:
-#   event definition "dnstap: no messages for N min"  — count() < 1 on the stream over N minutes, checked every minute
-#   + an HTTP notification to --webhook (optional; otherwise the event is only stored and shown under Alerts)
+# Creates or updates Graylog-native alerting for a dnstap stream (idempotent: objects are matched by title):
+#   event definition "dnstap: no messages for N min": count() < 1 on the stream over N minutes, checked every minute
+#   + an HTTP notification to --webhook (optional; without it the event is only stored and shown under Alerts)
 #
-#   create-graylog-alerts --url http://graylog:9000 --user admin --password P [--stream "BIND dnstap"] [--minutes 5]
-#                         [--webhook http://alerts.example/hook]
+#   create-graylog-alerts --url http://graylog:9000 (--token TOKEN | --user admin --password P)
+#                         [--stream "BIND dnstap"] [--minutes 5] [--webhook http://alerts.example/hook]
+# Give --user before --password (without --user the user is admin). Needs curl and jq.
 # The webhook URL is added to Graylog's URL allowlist (System > Configurations > URL Allowlist) when the allowlist is enabled.
 set -euo pipefail
 URL="" AUTH=() STREAM="BIND dnstap" MINUTES=5 HOOK=""

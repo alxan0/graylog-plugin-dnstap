@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -13,8 +13,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Minimal DNS wire-format parser (RFC 1035): header, first question and, optionally, the answer section.
- * Handles name compression with loop protection. Replaces dnsjava from the original plugin.
+ * Minimal DNS wire-format (RFC 1035) parser for the header, the first question and, optionally, the answer
+ * section; replaces the original plugin's dnsjava dependency. Malformed input, including compression pointer
+ * loops, throws {@link MalformedDnstapException}.
  */
 final class DnsMessage {
     private static final int MAX_ANSWERS = 32;
@@ -29,6 +30,7 @@ final class DnsMessage {
     int flags;
     int qdCount;
     int anCount;
+    // first question; null and -1 when the message has none
     String qname;
     int qtype = -1;
     int qclass = -1;
@@ -46,6 +48,10 @@ final class DnsMessage {
         this.pos = offset;
     }
 
+    /**
+     * Parses the DNS message in {@code buf[offset, offset + length)}. With {@code withAnswers}, up to
+     * {@code MAX_ANSWERS} answer records are formatted into {@link #answers} (never for UPDATE messages).
+     */
     static DnsMessage parse(byte[] buf, int offset, int length, boolean withAnswers) {
         if (length < 12) {
             throw new MalformedDnstapException("DNS message shorter than its header");
@@ -61,13 +67,15 @@ final class DnsMessage {
             m.qname = m.name();
             m.qtype = m.u16();
             m.qclass = m.u16();
-            for (int i = 1; i < m.qdCount; i++) { // practically never; skip extra questions
+            // skip any further questions (qdcount > 1 is practically unused)
+            for (int i = 1; i < m.qdCount; i++) {
                 m.name();
                 m.need(4);
                 m.pos += 4;
             }
         }
-        if (withAnswers && m.anCount > 0 && m.opcode() != 5) { // UPDATE uses the sections differently
+        // in UPDATE (opcode 5) the answer section holds prerequisites, not answers (RFC 2136)
+        if (withAnswers && m.anCount > 0 && m.opcode() != 5) {
             final int n = Math.min(m.anCount, MAX_ANSWERS);
             final List<String> answers = new ArrayList<>(n);
             for (int i = 0; i < n; i++) {
@@ -86,6 +94,7 @@ final class DnsMessage {
         return flags & 0xF;
     }
 
+    /** Header flags that are set, as space-separated lower-case names, e.g. "qr aa rd ra". */
     String flagString() {
         final StringBuilder sb = new StringBuilder(16);
         for (int i = 0; i < FLAG_BITS.length; i++) {
@@ -99,7 +108,6 @@ final class DnsMessage {
         return sb.toString();
     }
 
-    // ---- wire helpers
     private void need(int n) {
         if (end - pos < n) {
             throw new MalformedDnstapException("truncated DNS message");
@@ -120,7 +128,7 @@ final class DnsMessage {
         return v;
     }
 
-    /** Reads a (possibly compressed) domain name at pos; advances pos past it. Root = ".". No trailing dot. */
+    /** Reads the (possibly compressed) name at pos and advances pos past it; see {@link #nameAt}. */
     private String name() {
         final int[] p = {pos};
         final String n = nameAt(p);
@@ -128,6 +136,10 @@ final class DnsMessage {
         return n;
     }
 
+    /**
+     * Reads the name at {@code posRef[0]} in presentation format without a trailing dot (the root is ".") and
+     * sets {@code posRef[0]} to the byte after the name, or after its first compression pointer.
+     */
     private String nameAt(int[] posRef) {
         final StringBuilder sb = new StringBuilder(64);
         int p = posRef[0];
@@ -179,7 +191,10 @@ final class DnsMessage {
         return sb.isEmpty() ? "." : sb.toString();
     }
 
-    /** Presentation format (RFC 4343): "." and "\\" escaped, other non-printable bytes as \\DDD. */
+    /**
+     * Appends a label in presentation format (RFC 4343): "." and "\" escaped with a backslash, bytes outside
+     * 0x21..0x7E (including space) as \DDD in decimal.
+     */
     private void appendLabel(StringBuilder sb, int from, int len) {
         for (int i = from; i < from + len; i++) {
             final int c = b[i] & 0xFF;
@@ -193,9 +208,12 @@ final class DnsMessage {
         }
     }
 
-    /** One resource record, formatted "TYPE data" (e.g. "A 192.0.2.1", "CNAME www.example.org"). */
+    /**
+     * Reads one resource record and formats it as "TYPE data", e.g. "A 192.0.2.1" or "MX 10 mail.example.org".
+     * Other types show the rdata length ("42b"); the data is cut at {@code MAX_RDATA_TEXT} characters.
+     */
     private String record() {
-        name(); // owner, not shown
+        name(); // owner name, not shown
         final int type = u16();
         u16(); // class
         u32(); // ttl
@@ -217,7 +235,7 @@ final class DnsMessage {
             default -> rdlen + "b";
         };
         pos = rdStart + rdlen;
-        // bounded: the joined answers end up in a keyword field (OpenSearch rejects terms > 32766 bytes)
+        // capped: the joined answers go into a keyword field, and OpenSearch rejects terms over 32766 bytes
         return typeName(type) + " " + (data.length() > MAX_RDATA_TEXT ? data.substring(0, MAX_RDATA_TEXT) + "…" : data);
     }
 
@@ -231,6 +249,7 @@ final class DnsMessage {
         }
     }
 
+    /** TXT rdata as space-separated quoted strings; a string that runs past the rdata ends the list. */
     private String txt(int at, int len) {
         final StringBuilder sb = new StringBuilder();
         int p = at;
@@ -249,7 +268,6 @@ final class DnsMessage {
         return sb.toString();
     }
 
-    // ---- names of numbers
     static String typeName(int t) {
         return switch (t) {
             case 1 -> "A"; case 2 -> "NS"; case 5 -> "CNAME"; case 6 -> "SOA"; case 12 -> "PTR"; case 13 -> "HINFO";

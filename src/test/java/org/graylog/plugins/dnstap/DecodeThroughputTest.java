@@ -1,3 +1,7 @@
+/*
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
+ */
 package org.graylog.plugins.dnstap;
 
 import org.graylog2.plugin.configuration.Configuration;
@@ -9,7 +13,7 @@ import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
 
-/** Codec-only throughput on one core: mvn test -Dbench=true -Dtest=DecodeThroughputTest */
+/** Codec-only throughput on one thread; runs with ./build.sh bench (or -Dbench=true -Dtest=DecodeThroughputTest). */
 @EnabledIfSystemProperty(named = "bench", matches = "true")
 class DecodeThroughputTest {
     @Test

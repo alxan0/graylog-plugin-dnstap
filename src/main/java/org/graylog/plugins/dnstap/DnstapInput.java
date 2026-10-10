@@ -1,6 +1,6 @@
 /*
- * Dnstap input for Graylog 7.1. MIT License.
- * Rewrite of sega-yarkin/graylog-plugin-dnstap (Copyright (c) 2016 Sergey I. Yarkin, MIT).
+ * graylog-plugin-dnstap: Dnstap input for Graylog 7.1. MIT License, see LICENSE.
+ * Based on sega-yarkin/graylog-plugin-dnstap, Copyright (c) 2016 Sergey I. Yarkin.
  */
 package org.graylog.plugins.dnstap;
 
@@ -14,7 +14,10 @@ import org.graylog2.plugin.inputs.MessageInput;
 import org.graylog2.plugin.inputs.annotations.ConfigClass;
 import org.graylog2.plugin.inputs.annotations.FactoryClass;
 
-/** "Dnstap (Frame Streams/TCP)": accepts dnstap from BIND/Unbound/Knot via a Unix-socket-to-TCP relay, or from dnstap tools. */
+/**
+ * The "Dnstap (Frame Streams/TCP)" input: dnstap from BIND, Unbound, Knot and others over TCP/TLS, usually through a
+ * relay from the DNS server's Unix socket, or from dnstap tools.
+ */
 public class DnstapInput extends MessageInput {
     private static final String NAME = "Dnstap (Frame Streams/TCP)";
 
