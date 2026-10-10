@@ -5,6 +5,8 @@
 package org.graylog.plugins.dnstap;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.channel.ChannelFuture;
+import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.CorruptedFrameException;
@@ -13,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -39,7 +42,7 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
 
     private final int maxFrameSize;
     private final FstrmMetrics metrics;
-    private boolean failed;
+    private boolean discarding;        // after STOP or an error: nothing more is decoded, the connection is closing
     private boolean bidirectional;     // READY seen: the sender expects ACCEPT now and FINISH after STOP
     private int sizeSample;
 
@@ -54,7 +57,7 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
-        if (failed) {
+        if (discarding) {
             in.skipBytes(in.readableBytes());
             return;
         }
@@ -73,9 +76,17 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
     }
 
     private void fail(ChannelHandlerContext ctx, ByteBuf in) {
-        failed = true;
         in.skipBytes(in.readableBytes());
-        ctx.executor().execute(ctx::close);
+        closeLater(ctx);
+    }
+
+    /** Stops decoding and closes the connection after the current decode() call (closing inside it would release
+     *  the buffer Netty is still decoding from). */
+    private void closeLater(ChannelHandlerContext ctx) {
+        discarding = true;
+        ctx.executor().execute(() -> {
+            final ChannelFuture unused = ctx.close();
+        });
     }
 
     private void decodeFrames(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
@@ -83,15 +94,19 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
             final int start = in.readerIndex();
             final long length = in.getUnsignedInt(start);
             if (length == 0) {
-                if (in.readableBytes() < 8) return;
+                if (in.readableBytes() < 8) {
+                    return;
+                }
                 final long controlLength = in.getUnsignedInt(start + 4);
                 if (controlLength < 4 || controlLength > MAX_CONTROL_LENGTH) {
                     throw new CorruptedFrameException("bad Frame Streams control frame length " + controlLength);
                 }
-                if (in.readableBytes() < 8 + controlLength) return;
+                if (in.readableBytes() < 8 + controlLength) {
+                    return;
+                }
                 in.skipBytes(8);
                 handleControl(ctx, in.readSlice((int) controlLength));
-                if (failed) {          // STOP or refused content type: discard whatever follows
+                if (discarding) {      // STOP or refused content type: discard whatever follows
                     in.skipBytes(in.readableBytes());
                     return;
                 }
@@ -99,11 +114,16 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                 if (length > maxFrameSize) {
                     throw new TooLongFrameException("Frame Streams data frame of " + length + " bytes exceeds the limit of " + maxFrameSize);
                 }
-                if (in.readableBytes() < 4 + length) return;
+                if (in.readableBytes() < 4 + length) {
+                    return;
+                }
                 in.skipBytes(4);
                 out.add(in.readRetainedSlice((int) length));
                 metrics.frames.inc();
-                if ((++sizeSample & 31) == 0) metrics.frameSize.update(length);   // sampled: the reservoir locks
+                sizeSample++;
+                if ((sizeSample & 31) == 0) {
+                    metrics.frameSize.update(length);   // sampled: the histogram's reservoir is synchronised
+                }
             }
         }
     }
@@ -118,29 +138,30 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                     // the spec: the receiver must not ACCEPT a stream whose content type it doesn't understand
                     metrics.framingErrors.inc();
                     LOG.warn("Frame Streams sender {} offers content types {} but not {}: closing", ctx.channel().remoteAddress(), offered, DNSTAP_CONTENT_TYPE);
-                    failed = true;
-                    ctx.executor().execute(ctx::close);
+                    closeLater(ctx);
                     return;
                 }
                 bidirectional = true;
-                ctx.writeAndFlush(controlFrame(ctx, CONTROL_ACCEPT));
+                ctx.writeAndFlush(controlFrame(ctx, CONTROL_ACCEPT)).addListener(ChannelFutureListener.CLOSE_ON_FAILURE);
                 LOG.debug("Frame Streams READY from {}: sent ACCEPT", ctx.channel().remoteAddress());
             }
             case CONTROL_START -> {
                 metrics.start.inc();
-                LOG.debug("Frame Streams START from {} ({})", ctx.channel().remoteAddress(), contentTypes(control));
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Frame Streams START from {} ({})", ctx.channel().remoteAddress(), contentTypes(control));
+                }
             }
             case CONTROL_STOP -> {
                 metrics.stop.inc();
                 // Nothing may follow STOP. FINISH is the receiver's answer in bidirectional mode only. Close once
                 // FINISH is written, and never inside this decode call: the write can complete synchronously on the
                 // event loop, and closing inside decode() releases the buffer being decoded.
-                failed = true;
                 if (bidirectional) {
+                    discarding = true;
                     LOG.debug("Frame Streams STOP from {}: sending FINISH", ctx.channel().remoteAddress());
-                    ctx.writeAndFlush(controlFrame(ctx, CONTROL_FINISH)).addListener(f -> ctx.executor().execute(ctx::close));
+                    ctx.writeAndFlush(controlFrame(ctx, CONTROL_FINISH)).addListener(f -> closeLater(ctx));
                 } else {
-                    ctx.executor().execute(ctx::close);
+                    closeLater(ctx);
                 }
             }
             case CONTROL_ACCEPT, CONTROL_FINISH -> { /* only meaningful for the sending side */ }
@@ -149,15 +170,29 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
     }
 
     private static List<String> contentTypes(ByteBuf control) {
-        final List<String> types = new java.util.ArrayList<>(1);
+        final List<String> types = new ArrayList<>(1);
         while (control.readableBytes() >= 8) {
             final int fieldType = control.readInt();
             final long len = control.readUnsignedInt();
-            if (len > control.readableBytes()) break;
+            if (len > control.readableBytes()) {
+                break;
+            }
             final String value = control.readCharSequence((int) len, StandardCharsets.US_ASCII).toString();
-            if (fieldType == FIELD_CONTENT_TYPE) types.add(value);
+            if (fieldType == FIELD_CONTENT_TYPE) {
+                types.add(printable(value));
+            }
         }
         return types;
+    }
+
+    /** The sender chooses these bytes and they end up in log lines: no control characters (forged lines). */
+    static String printable(String s) {
+        final StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            final char c = s.charAt(i);
+            sb.append(c >= 0x20 && c < 0x7F ? c : '?');
+        }
+        return sb.toString();
     }
 
     private static ByteBuf controlFrame(ChannelHandlerContext ctx, int type) {

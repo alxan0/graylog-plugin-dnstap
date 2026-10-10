@@ -18,6 +18,8 @@ import org.graylog2.plugin.inputs.annotations.FactoryClass;
 public class DnstapInput extends MessageInput {
     private static final String NAME = "Dnstap (Frame Streams/TCP)";
 
+    private final MetricRegistry metricRegistry;
+
     @Inject
     public DnstapInput(@Assisted Configuration configuration,
                        FstrmTransport.Factory transportFactory,
@@ -29,6 +31,19 @@ public class DnstapInput extends MessageInput {
                        ServerStatus serverStatus) {
         super(metricRegistry, configuration, transportFactory.create(configuration),
                 localRegistry, codecFactory.create(configuration), config, descriptor, serverStatus);
+        this.metricRegistry = metricRegistry;
+    }
+
+    @Override
+    public void stop() {
+        super.stop();
+        DnstapCodec.removeMetrics(metricRegistry, getId());
+    }
+
+    @Override
+    public void terminate() {
+        super.terminate();
+        DnstapCodec.removeMetrics(metricRegistry, getId());
     }
 
     @FactoryClass

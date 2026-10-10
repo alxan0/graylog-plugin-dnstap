@@ -20,7 +20,6 @@ import org.graylog2.plugin.inputs.MessageInput;
 import org.graylog2.plugin.inputs.annotations.ConfigClass;
 import org.graylog2.plugin.inputs.annotations.FactoryClass;
 import org.graylog2.plugin.inputs.transports.AbstractTcpTransport;
-import org.graylog2.plugin.inputs.transports.NettyTransport;
 import org.graylog2.plugin.inputs.transports.Transport;
 import org.graylog2.plugin.inputs.util.ThroughputCounter;
 import org.graylog2.security.encryption.EncryptedValueService;
@@ -76,8 +75,13 @@ public class FstrmTransport extends AbstractTcpTransport {
         @Override
         public ConfigurationRequest getRequestedConfiguration() {
             final ConfigurationRequest cr = super.getRequestedConfiguration();
-            if (cr.containsField(NettyTransport.CK_PORT)) {
-                cr.getField(NettyTransport.CK_PORT).setDefaultValue(DEFAULT_PORT);
+            if (cr.containsField(CK_PORT)) {
+                cr.getField(CK_PORT).setDefaultValue(DEFAULT_PORT);
+            }
+            // A relay that vanishes without a FIN/RST (host down, network cut, NAT timeout) would otherwise leave a
+            // half-open connection with its buffers here forever; keepalive lets the kernel detect and close it.
+            if (cr.containsField(CK_TCP_KEEPALIVE)) {
+                cr.getField(CK_TCP_KEEPALIVE).setDefaultValue(true);
             }
             cr.addField(new NumberField(CK_MAX_FRAME_SIZE, "Maximum frame size", DEFAULT_MAX_FRAME_SIZE,
                     "Largest accepted Frame Streams data frame in bytes (one dnstap message; DNS messages are at most 64 KiB). "

@@ -4,6 +4,8 @@
  */
 package org.graylog.plugins.dnstap;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * One decoded dnstap payload (schema: https://github.com/dnstap/dnstap.pb/blob/master/dnstap.proto).
  * <pre>
@@ -16,6 +18,12 @@ package org.graylog.plugins.dnstap;
  */
 final class DnstapFrame {
     static final int DNSTAP_TYPE_MESSAGE = 1;
+    static final int AUTH_QUERY = 1;
+    static final int AUTH_RESPONSE = 2;
+    static final int CLIENT_QUERY = 5;
+    static final int CLIENT_RESPONSE = 6;
+    static final int UPDATE_QUERY = 13;
+    static final int UPDATE_RESPONSE = 14;
 
     // Dnstap
     String identity;
@@ -37,8 +45,10 @@ final class DnstapFrame {
     byte[] queryZone;
     // DNS messages are kept as (offset, length) into the frame buffer: no copy
     byte[] buf;
-    int queryMessageOffset = -1, queryMessageLength;
-    int responseMessageOffset = -1, responseMessageLength;
+    int queryMessageOffset = -1;
+    int queryMessageLength;
+    int responseMessageOffset = -1;
+    int responseMessageLength;
 
     static DnstapFrame parse(byte[] payload) {
         final DnstapFrame f = new DnstapFrame();
@@ -46,7 +56,8 @@ final class DnstapFrame {
         final ProtoReader r = new ProtoReader(payload, 0, payload.length);
         while (r.hasMore()) {
             final int tag = r.readTag();
-            final int field = tag >>> 3, wire = tag & 7;
+            final int field = tag >>> 3;
+            final int wire = tag & 7;
             switch (field) {
                 case 1 -> f.identity = utf8(r.readBytes());
                 case 2 -> f.version = utf8(r.readBytes());
@@ -67,7 +78,8 @@ final class DnstapFrame {
         final ProtoReader r = new ProtoReader(payload, offset, length);
         while (r.hasMore()) {
             final int tag = r.readTag();
-            final int field = tag >>> 3, wire = tag & 7;
+            final int field = tag >>> 3;
+            final int wire = tag & 7;
             switch (field) {
                 case 1 -> f.messageType = (int) r.readVarint();
                 case 2 -> f.socketFamily = (int) r.readVarint();
@@ -78,11 +90,19 @@ final class DnstapFrame {
                 case 7 -> f.responsePort = (int) r.readVarint();
                 case 8 -> f.queryTimeSec = r.readVarint();
                 case 9 -> f.queryTimeNsec = r.readFixed32();
-                case 10 -> { f.queryMessageLength = r.readLength(); f.queryMessageOffset = r.position(); r.advance(f.queryMessageLength); }
+                case 10 -> {
+                    f.queryMessageLength = r.readLength();
+                    f.queryMessageOffset = r.position();
+                    r.advance(f.queryMessageLength);
+                }
                 case 11 -> f.queryZone = r.readBytes();
                 case 12 -> f.responseTimeSec = r.readVarint();
                 case 13 -> f.responseTimeNsec = r.readFixed32();
-                case 14 -> { f.responseMessageLength = r.readLength(); f.responseMessageOffset = r.position(); r.advance(f.responseMessageLength); }
+                case 14 -> {
+                    f.responseMessageLength = r.readLength();
+                    f.responseMessageOffset = r.position();
+                    r.advance(f.responseMessageLength);
+                }
                 default -> r.skip(wire);
             }
         }
@@ -92,8 +112,16 @@ final class DnstapFrame {
         return messageType % 2 == 0; // *_RESPONSE types are the even ones
     }
 
+    /** Events where the query address is a DNS client and the response address is this server. */
+    boolean isClientSide() {
+        return switch (messageType) {
+            case AUTH_QUERY, AUTH_RESPONSE, CLIENT_QUERY, CLIENT_RESPONSE, UPDATE_QUERY, UPDATE_RESPONSE -> true;
+            default -> false;
+        };
+    }
+
     private static String utf8(byte[] b) {
-        return new String(b, java.nio.charset.StandardCharsets.UTF_8);
+        return new String(b, StandardCharsets.UTF_8);
     }
 
     // ---- names, as in dnstap.proto and dnstap-read's short codes

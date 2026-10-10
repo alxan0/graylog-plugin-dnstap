@@ -89,9 +89,9 @@ final class ProtoReader {
     void skip(int wireType) {
         switch (wireType) {
             case WIRE_VARINT -> readVarint();
-            case WIRE_FIXED64 -> { require(8); pos += 8; }
-            case WIRE_LENGTH_DELIMITED -> { final int len = readLength(); pos += len; }
-            case WIRE_FIXED32 -> { require(4); pos += 4; }
+            case WIRE_FIXED64 -> advance(8);
+            case WIRE_LENGTH_DELIMITED -> advance(readLength());
+            case WIRE_FIXED32 -> advance(4);
             default -> throw new MalformedDnstapException("unsupported wire type " + wireType);
         }
     }
@@ -99,10 +99,6 @@ final class ProtoReader {
     void advance(int n) {
         require(n);
         pos += n;
-    }
-
-    byte[] buffer() {
-        return buf;
     }
 
     private void require(int n) {

@@ -8,6 +8,7 @@ import com.google.common.net.InetAddresses;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,16 +20,23 @@ final class DnsMessage {
     private static final int MAX_ANSWERS = 32;
     private static final int MAX_POINTER_JUMPS = 64;
     private static final int MAX_RDATA_TEXT = 256;
+    private static final int MAX_NAME_TEXT = 1024;
+
+    private static final int[] FLAG_BITS = {0x8000, 0x0400, 0x0200, 0x0100, 0x0080, 0x0020, 0x0010};
+    private static final String[] FLAG_NAMES = {"qr", "aa", "tc", "rd", "ra", "ad", "cd"};
 
     int id;
     int flags;
-    int qdCount, anCount, nsCount, arCount;
+    int qdCount;
+    int anCount;
     String qname;
-    int qtype = -1, qclass = -1;
+    int qtype = -1;
+    int qclass = -1;
     List<String> answers = List.of();
 
     private final byte[] b;
-    private final int base, end;
+    private final int base;
+    private final int end;
     private int pos;
 
     private DnsMessage(byte[] b, int offset, int length) {
@@ -47,8 +55,8 @@ final class DnsMessage {
         m.flags = m.u16();
         m.qdCount = m.u16();
         m.anCount = m.u16();
-        m.nsCount = m.u16();
-        m.arCount = m.u16();
+        m.u16(); // nscount
+        m.u16(); // arcount
         if (m.qdCount > 0) {
             m.qname = m.name();
             m.qtype = m.u16();
@@ -78,20 +86,17 @@ final class DnsMessage {
         return flags & 0xF;
     }
 
-    boolean isResponse() {
-        return (flags & 0x8000) != 0;
-    }
-
     String flagString() {
         final StringBuilder sb = new StringBuilder(16);
-        if ((flags & 0x8000) != 0) sb.append("qr ");
-        if ((flags & 0x0400) != 0) sb.append("aa ");
-        if ((flags & 0x0200) != 0) sb.append("tc ");
-        if ((flags & 0x0100) != 0) sb.append("rd ");
-        if ((flags & 0x0080) != 0) sb.append("ra ");
-        if ((flags & 0x0020) != 0) sb.append("ad ");
-        if ((flags & 0x0010) != 0) sb.append("cd ");
-        return sb.isEmpty() ? "" : sb.substring(0, sb.length() - 1);
+        for (int i = 0; i < FLAG_BITS.length; i++) {
+            if ((flags & FLAG_BITS[i]) != 0) {
+                if (!sb.isEmpty()) {
+                    sb.append(' ');
+                }
+                sb.append(FLAG_NAMES[i]);
+            }
+        }
+        return sb.toString();
     }
 
     // ---- wire helpers
@@ -129,35 +134,63 @@ final class DnsMessage {
         int jumps = 0;
         int resume = -1;
         while (true) {
-            if (p >= end) throw new MalformedDnstapException("name runs past the message");
+            if (p >= end) {
+                throw new MalformedDnstapException("name runs past the message");
+            }
             final int len = b[p] & 0xFF;
             if (len == 0) {
                 p++;
                 break;
             }
             if ((len & 0xC0) == 0xC0) {
-                if (p + 1 >= end) throw new MalformedDnstapException("truncated name pointer");
-                if (++jumps > MAX_POINTER_JUMPS) throw new MalformedDnstapException("name pointer loop");
+                if (p + 1 >= end) {
+                    throw new MalformedDnstapException("truncated name pointer");
+                }
+                jumps++;
+                if (jumps > MAX_POINTER_JUMPS) {
+                    throw new MalformedDnstapException("name pointer loop");
+                }
                 final int target = base + (((len & 0x3F) << 8) | (b[p + 1] & 0xFF));
-                if (resume < 0) resume = p + 2;
-                if (target >= end) throw new MalformedDnstapException("name pointer out of range");
+                if (target >= end) {
+                    throw new MalformedDnstapException("name pointer out of range");
+                }
+                if (resume < 0) {
+                    resume = p + 2;
+                }
                 p = target;
                 continue;
             }
-            if ((len & 0xC0) != 0) throw new MalformedDnstapException("unsupported label type");
-            if (p + 1 + len > end) throw new MalformedDnstapException("label runs past the message");
-            if (!sb.isEmpty()) sb.append('.');
-            for (int i = p + 1; i <= p + len; i++) {
-                final char c = (char) (b[i] & 0xFF);
-                if (c == '.' || c == '\\') sb.append('\\');
-                if (c < 0x21 || c > 0x7E) sb.append(String.format("\\%03d", (int) c));
-                else sb.append(c);
+            if ((len & 0xC0) != 0) {
+                throw new MalformedDnstapException("unsupported label type");
             }
-            if (sb.length() > 1024) throw new MalformedDnstapException("name too long");
+            if (p + 1 + len > end) {
+                throw new MalformedDnstapException("label runs past the message");
+            }
+            if (!sb.isEmpty()) {
+                sb.append('.');
+            }
+            appendLabel(sb, p + 1, len);
+            if (sb.length() > MAX_NAME_TEXT) {
+                throw new MalformedDnstapException("name too long");
+            }
             p += 1 + len;
         }
         posRef[0] = resume >= 0 ? resume : p;
         return sb.isEmpty() ? "." : sb.toString();
+    }
+
+    /** Presentation format (RFC 4343): "." and "\\" escaped, other non-printable bytes as \\DDD. */
+    private void appendLabel(StringBuilder sb, int from, int len) {
+        for (int i = from; i < from + len; i++) {
+            final int c = b[i] & 0xFF;
+            if (c == '.' || c == '\\') {
+                sb.append('\\').append((char) c);
+            } else if (c < 0x21 || c > 0x7E) {
+                sb.append('\\').append((char) ('0' + c / 100)).append((char) ('0' + c / 10 % 10)).append((char) ('0' + c % 10));
+            } else {
+                sb.append((char) c);
+            }
+        }
     }
 
     /** One resource record, formatted "TYPE data" (e.g. "A 192.0.2.1", "CNAME www.example.org"). */
@@ -172,12 +205,14 @@ final class DnsMessage {
         final String data = switch (type) {
             case 1 -> rdlen == 4 ? ip(rdStart, 4) : "?";
             case 28 -> rdlen == 16 ? ip(rdStart, 16) : "?";
-            case 2, 5, 12, 39 -> { final int[] p = {rdStart}; yield nameAt(p); }               // NS, CNAME, PTR, DNAME
-            case 15 -> {                                                                       // MX
-                if (rdlen < 3) throw new MalformedDnstapException("MX rdata too short");
+            case 2, 5, 6, 12, 39 -> nameAt(new int[] {rdStart});  // NS, CNAME, SOA (mname only), PTR, DNAME
+            case 15 -> {                                            // MX
+                if (rdlen < 3) {
+                    throw new MalformedDnstapException("MX rdata too short");
+                }
                 final int pref = (b[rdStart] & 0xFF) << 8 | (b[rdStart + 1] & 0xFF);
-                final int[] p = {rdStart + 2}; yield pref + " " + nameAt(p); }
-            case 6 -> { final int[] p = {rdStart}; yield nameAt(p); }                          // SOA: mname
+                yield pref + " " + nameAt(new int[] {rdStart + 2});
+            }
             case 16 -> txt(rdStart, rdlen);
             default -> rdlen + "b";
         };
@@ -202,9 +237,13 @@ final class DnsMessage {
         final int stop = at + len;
         while (p < stop) {
             final int l = b[p] & 0xFF;
-            if (p + 1 + l > stop) break;
-            if (!sb.isEmpty()) sb.append(' ');
-            sb.append('"').append(new String(b, p + 1, l, java.nio.charset.StandardCharsets.UTF_8)).append('"');
+            if (p + 1 + l > stop) {
+                break;
+            }
+            if (!sb.isEmpty()) {
+                sb.append(' ');
+            }
+            sb.append('"').append(new String(b, p + 1, l, StandardCharsets.UTF_8)).append('"');
             p += 1 + l;
         }
         return sb.toString();
