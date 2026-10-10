@@ -67,15 +67,17 @@ final class DnsMessage {
             m.qname = m.name();
             m.qtype = m.u16();
             m.qclass = m.u16();
-            // skip any further questions (qdcount > 1 is practically unused)
-            for (int i = 1; i < m.qdCount; i++) {
-                m.name();
-                m.need(4);
-                m.pos += 4;
-            }
         }
         // in UPDATE (opcode 5) the answer section holds prerequisites, not answers (RFC 2136)
         if (withAnswers && m.anCount > 0 && m.opcode() != 5) {
+            // Further questions (qdcount > 1 is practically unused) are only walked to reach the answers, and only as
+            // wire bytes: a sender can declare 65535 questions that all point at one long name, and decoding each
+            // one made a single 400 KB frame cost ~150 ms.
+            for (int i = 1; i < m.qdCount; i++) {
+                m.skipName();
+                m.need(4);
+                m.pos += 4;
+            }
             final int n = Math.min(m.anCount, MAX_ANSWERS);
             final List<String> answers = new ArrayList<>(n);
             for (int i = 0; i < n; i++) {
@@ -129,6 +131,28 @@ final class DnsMessage {
     }
 
     /** Reads the (possibly compressed) name at pos and advances pos past it; see {@link #nameAt}. */
+    /** Advances pos past the name at pos without decoding it: a compression pointer ends the name on the wire. */
+    private void skipName() {
+        while (true) {
+            need(1);
+            final int len = b[pos] & 0xFF;
+            if (len == 0) {
+                pos++;
+                return;
+            }
+            if ((len & 0xC0) == 0xC0) {
+                need(2);
+                pos += 2;
+                return;
+            }
+            if ((len & 0xC0) != 0) {
+                throw new MalformedDnstapException("unsupported label type");
+            }
+            need(1 + len);
+            pos += 1 + len;
+        }
+    }
+
     private String name() {
         final int[] p = {pos};
         final String n = nameAt(p);
@@ -213,7 +237,7 @@ final class DnsMessage {
      * Other types show the rdata length ("42b"); the data is cut at {@code MAX_RDATA_TEXT} characters.
      */
     private String record() {
-        name(); // owner name, not shown
+        skipName(); // owner name, not shown
         final int type = u16();
         u16(); // class
         u32(); // ttl
