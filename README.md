@@ -1,4 +1,4 @@
-# graylog-plugin-dnstap for Graylog 7.1
+# graylog-plugin-dnstap for Graylog 7.1 (1.0.1)
 
 A **Dnstap input** for Graylog **7.1.10**: it receives [dnstap](https://dnstap.info/) over Frame Streams/TCP and
 turns each DNS message into a Graylog message with parsed fields.
@@ -15,7 +15,7 @@ constructors and protobuf 3.0.
 | Decoding | protobuf-java 3.0 generated classes + dnsjava 2.1 | small hand-written protobuf + DNS wire parsers: **no dependencies**, no clash with Graylog's own protobuf, ~630k frames/s per core (codec micro-benchmark) |
 | Fields | `dnstap_*` | dnstap metadata **and** the names a BIND query-log pipeline produces (`client_ip`, `client_port`, `qname`, `qclass`, `qtype`, `server_ip`), plus `rcode`, `answers`, `latency_us`, `dns_flags`, … |
 | Config | full message on/off | include answers; skip message types (e.g. drop responses at the input) |
-| Tests | — | 8 unit tests against a real BIND 9.20.29 dnstap capture (frame decoding in random chunks, handshake, type counts equal to `dnstap-read`, field values) |
+| Tests | — | 13 unit tests incl. fuzzing (see below), integration tests for TLS and restarts (`itest/`), a UI check, a soak test |
 
 ## Build
 ```bash
@@ -74,6 +74,61 @@ missing. The lab benchmark's self-test caught exactly this: 1000 queries sent, 1
 Malformed frames raise an `InputProcessingException`, so they show up in Graylog's input/processing failure handling.
 Non-message dnstap payloads are skipped.
 
+## Hardening and test status (1.0.1)
+
+| Test | How | Result |
+|---|---|---|
+| Unit tests | 8 tests on a real BIND 9.20.29 capture (629 frames): frame decoding fed in random chunks, the READY/ACCEPT/START/STOP/FINISH handshake, message-type counts equal to `dnstap-read`, field values | pass |
+| **Fuzzing** (`FuzzTest`, seeded, `FUZZ_ITERATIONS=3000000 ./build.sh`) | 3,000,000 mutated real frames + 1,000,000 random inputs into the codec: only a message, an empty result or `InputProcessingException` is allowed, each in < 100 ms. 200,000 random byte streams into the frame decoder: only `CorruptedFrameException`/`TooLongFrameException` are allowed, and the connection must be closed. Hand-written hostile DNS messages: compression-pointer loops, overlong labels, missing records, short MX | pass after the fixes below |
+| **TLS** (`itest/itest-tls`) | Input with a server certificate and *required* client certificates (lab CA); the 629-frame capture sent under 5 client configurations, counted exactly with the input's own counter | valid client: 629/629. Plain TCP, no client cert, cert from an untrusted CA: 0. A client verifying the server against the wrong CA refuses to connect |
+| **Restarts** (`itest/itest-restarts`) | 2,000 q/s of uniquely named queries for 60 s; one event at +15 s; loss counted exactly, gap from per-second counts | see the next section |
+| **Web UI** | Created, started and edited a Dnstap input in the browser (7.1 input setup wizard); sent the capture; searched it | the form shows all settings including the plugin's own; values are saved and reloaded correctly; "skip CR" → 629 received, 399 indexed, 0 CR; messages searchable |
+| **Soak** (`../bench/bench-soak`) | 3,000 q/s over TLS for hours; exact loss per 5-minute window; Graylog old-gen live set after GC, heap, threads, FDs, RSS sampled every 30 s | see `../bench/results/soak-*/summary.md` |
+
+**Bugs found and fixed by these tests (1.0.0 → 1.0.1):**
+1. **A framing error didn't close the connection** (fuzzing). The stream can't resynchronise, so later bytes would have been misread as frames. The decoder now discards the rest and closes, and the sender reconnects.
+2. **Closing inside `decode()` used a buffer Netty had already released** (`IllegalReferenceCountException`, found by fuzzing). This happened after a framing error and **on every normal STOP/FINISH**, i.e. every time BIND stops its stream (reload, shutdown). The connection is now closed after the decode call returns.
+3. **Short MX rdata wasn't bounds-checked** (fuzzing). It is now, and the codec additionally turns *any* unexpected exception into a per-frame `InputProcessingException` instead of an error inside Graylog's processing.
+4. Build: `target/` wasn't cleaned, so `dist/` received two plugin jars (two versions of the same plugin conflict in Graylog). The build now runs `clean package` and copies only the current jar.
+
+## Restarts and outages: losses, and how to avoid them
+dnstap over TLS at 2,000 q/s. *lost* = queries BIND answered whose event never reached Graylog.
+
+| Event | Default relay (socat, BIND queue 512/thread) | `--dnstap-queue 16384 --relay-retry` |
+|---|---|---|
+| Graylog input stopped 5 s | **9,593 lost** (4.8 s), BIND counted 0 | **55** lost |
+| Graylog restart (~15 s) | **28,767 lost** (14.4 s), BIND counted 14 | **32** lost |
+| (for comparison) Graylog restart with syslog/UDP | 26,710 lost (13.4 s) | – |
+| Relay connection killed | 64 (in flight) | – |
+| named restart | 0 of the answered queries | – |
+
+Every case recovered on its own.
+
+- **With the default setup, dnstap loses a Graylog outage just like UDP, and silently.** socat accepts named's frames and drops them, so BIND's `DNSTAPdropped` doesn't count them. Only Graylog-side counting reveals the loss.
+- Each change alone doesn't help:
+  - a bigger queue only: 30,068 lost
+  - relay retry only: 26,657 lost, but now *counted* by BIND
+- **Together they ride out a Graylog restart almost completely.**
+  - `socat … TCP/OPENSSL:…,retry=120,interval=1` keeps named's connection waiting instead of being dropped.
+  - `fstrm-set-input-queue-size 16384` (per worker thread) holds the frames until Graylog is back: 12 threads × 16,384 ≈ 98 s at 2,000 q/s.
+
+  Beyond the queue, named drops frames and counts them; it never slows DNS.
+
+**Recommended BIND + relay settings:**
+```
+options {
+    dnstap { auth query; client query; };
+    dnstap-output unix "/run/named/dnstap.sock";
+    dnstap-identity hostname;
+    fstrm-set-input-queue-size 16384;      // per worker thread; size it for the longest Graylog outage to ride out
+};
+```
+```bash
+socat -b 262144 UNIX-LISTEN:/run/named/dnstap.sock,fork,unlink-early,user=bind,group=bind,mode=0660 \
+  OPENSSL:graylog.example:6000,cafile=/etc/bind/tls/ca.crt,cert=/etc/bind/tls/client.crt,key=/etc/bind/tls/client.key,verify=1,nodelay,retry=120,interval=1
+```
+Run socat as a systemd service with `Restart=always`. Watch `DNSTAPdropped` in BIND's statistics, and the input's `incomingMessages` and `invalidMessages` metrics in Graylog.
+
 ## Layout
 `src/main/java/org/graylog/plugins/dnstap/`:
 - `FstrmTransport` (Graylog TCP transport + decoder)
@@ -83,6 +138,6 @@ Non-message dnstap payloads are skipped.
 - `DnsMessage` (DNS wire format)
 - `DnstapInput`, `DnstapModule`, `DnstapPlugin`, `DnstapPluginMetaData`
 
-Tests and the BIND capture are in `src/test/`.
+Tests and the BIND capture are in `src/test/`. Integration tests are in `itest/`; their outputs go to `itest/results/`.
 
 License: MIT. Credit to Sergey I. Yarkin for the original plugin.

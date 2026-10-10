@@ -172,8 +172,10 @@ final class DnsMessage {
             case 1 -> rdlen == 4 ? ip(rdStart, 4) : "?";
             case 28 -> rdlen == 16 ? ip(rdStart, 16) : "?";
             case 2, 5, 12, 39 -> { final int[] p = {rdStart}; yield nameAt(p); }               // NS, CNAME, PTR, DNAME
-            case 15 -> { final int pref = (b[rdStart] & 0xFF) << 8 | (b[rdStart + 1] & 0xFF);
-                         final int[] p = {rdStart + 2}; yield pref + " " + nameAt(p); }        // MX
+            case 15 -> {                                                                       // MX
+                if (rdlen < 3) throw new MalformedDnstapException("MX rdata too short");
+                final int pref = (b[rdStart] & 0xFF) << 8 | (b[rdStart + 1] & 0xFF);
+                final int[] p = {rdStart + 2}; yield pref + " " + nameAt(p); }
             case 6 -> { final int[] p = {rdStart}; yield nameAt(p); }                          // SOA: mname
             case 16 -> txt(rdStart, rdlen);
             default -> rdlen + "b";

@@ -80,8 +80,16 @@ public class DnstapCodec extends AbstractCodec {
             }
         } catch (MalformedDnstapException e) {
             throw InputProcessingException.create("Couldn't decode dnstap frame: " + e.getMessage(), rawMessage);
+        } catch (RuntimeException e) {
+            // last line of defence: a parser bug must surface as an input failure for this one frame,
+            // not as an unexpected exception in Graylog's processing
+            throw InputProcessingException.create("Couldn't decode dnstap frame: " + e, e, rawMessage);
         }
-        return Optional.of(toMessage(f, dns, rawMessage));
+        try {
+            return Optional.of(toMessage(f, dns, rawMessage));
+        } catch (RuntimeException e) {
+            throw InputProcessingException.create("Couldn't build a message from a dnstap frame: " + e, e, rawMessage);
+        }
     }
 
     private Message toMessage(DnstapFrame f, DnsMessage dns, RawMessage raw) {

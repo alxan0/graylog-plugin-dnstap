@@ -5,7 +5,6 @@
 package org.graylog.plugins.dnstap;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.ByteToMessageDecoder;
 import io.netty.handler.codec.CorruptedFrameException;
@@ -39,6 +38,7 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
     private static final int MAX_CONTROL_LENGTH = 512;
 
     private final int maxFrameSize;
+    private boolean failed;
 
     public FstrmFrameDecoder(int maxFrameSize) {
         this.maxFrameSize = maxFrameSize;
@@ -46,6 +46,24 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
 
     @Override
     protected void decode(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
+        if (failed) {
+            in.skipBytes(in.readableBytes());
+            return;
+        }
+        try {
+            decodeFrames(ctx, in, out);
+        } catch (CorruptedFrameException | TooLongFrameException e) {
+            // A Frame Streams connection can't resynchronise after a framing error: everything after it would be
+            // misread. Discard the rest and close the connection once this decode call has returned (closing
+            // inside decode() would release the buffer Netty is still decoding from). The sender reconnects.
+            failed = true;
+            in.skipBytes(in.readableBytes());
+            ctx.executor().execute(ctx::close);
+            throw e;
+        }
+    }
+
+    private void decodeFrames(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
         while (in.readableBytes() >= 4) {
             final int start = in.readerIndex();
             final long length = in.getUnsignedInt(start);
@@ -58,6 +76,10 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                 if (in.readableBytes() < 8 + controlLength) return;
                 in.skipBytes(8);
                 handleControl(ctx, in.readSlice((int) controlLength));
+                if (failed) {          // STOP: discard whatever follows
+                    in.skipBytes(in.readableBytes());
+                    return;
+                }
             } else {
                 if (length > maxFrameSize) {
                     throw new TooLongFrameException("Frame Streams data frame of " + length + " bytes exceeds the limit of " + maxFrameSize);
@@ -83,7 +105,11 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
             case CONTROL_START -> LOG.debug("Frame Streams START from {} ({})", ctx.channel().remoteAddress(), contentTypes(control));
             case CONTROL_STOP -> {
                 LOG.debug("Frame Streams STOP from {}: sending FINISH", ctx.channel().remoteAddress());
-                ctx.writeAndFlush(controlFrame(ctx, CONTROL_FINISH)).addListener(ChannelFutureListener.CLOSE);
+                // Nothing may follow STOP. Close only after this decode call has returned: the write can complete
+                // synchronously on the event loop, and closing inside decode() releases the buffer being decoded.
+                failed = true;
+                ctx.writeAndFlush(controlFrame(ctx, CONTROL_FINISH));
+                ctx.executor().execute(ctx::close);
             }
             case CONTROL_ACCEPT, CONTROL_FINISH -> { /* only meaningful for the sending side */ }
             default -> throw new CorruptedFrameException("unknown Frame Streams control type " + type);
