@@ -33,8 +33,11 @@ public class FstrmTransport extends AbstractTcpTransport {
     static final String CK_MAX_FRAME_SIZE = "max_frame_size";
     static final int DEFAULT_PORT = 6000;
     static final int DEFAULT_MAX_FRAME_SIZE = 1024 * 1024;
+    static final int MIN_MAX_FRAME_SIZE = 65_535 + 1024;
+    static final int MAX_MAX_FRAME_SIZE = 16 * 1024 * 1024;
 
     private final int maxFrameSize;
+    private final FstrmMetrics metrics;
 
     @Inject
     public FstrmTransport(@Assisted Configuration configuration,
@@ -47,13 +50,15 @@ public class FstrmTransport extends AbstractTcpTransport {
                           EncryptedValueService encryptedValueService) {
         super(configuration, throughputCounter, localRegistry, eventLoopGroup, eventLoopGroupFactory,
                 nettyTransportConfiguration, tlsConfiguration, encryptedValueService);
-        this.maxFrameSize = configuration.getInt(CK_MAX_FRAME_SIZE, DEFAULT_MAX_FRAME_SIZE);
+        // bounded: a DNS message is at most 64 KiB (+ dnstap envelope); a value of 0 or less would reject every frame
+        this.maxFrameSize = Math.min(MAX_MAX_FRAME_SIZE, Math.max(MIN_MAX_FRAME_SIZE, configuration.getInt(CK_MAX_FRAME_SIZE, DEFAULT_MAX_FRAME_SIZE)));
+        this.metrics = new FstrmMetrics(localRegistry);   // published under the input by Graylog
     }
 
     @Override
     protected LinkedHashMap<String, Callable<? extends ChannelHandler>> getCustomChildChannelHandlers(MessageInput input) {
         final LinkedHashMap<String, Callable<? extends ChannelHandler>> handlers = new LinkedHashMap<>(super.getCustomChildChannelHandlers(input));
-        handlers.put("fstrm", () -> new FstrmFrameDecoder(maxFrameSize));
+        handlers.put("fstrm", () -> new FstrmFrameDecoder(maxFrameSize, metrics));
         return handlers;
     }
 
@@ -75,8 +80,9 @@ public class FstrmTransport extends AbstractTcpTransport {
                 cr.getField(NettyTransport.CK_PORT).setDefaultValue(DEFAULT_PORT);
             }
             cr.addField(new NumberField(CK_MAX_FRAME_SIZE, "Maximum frame size", DEFAULT_MAX_FRAME_SIZE,
-                    "Largest accepted Frame Streams data frame in bytes (one dnstap message; DNS messages are at most 64 KiB).",
-                    ConfigurationField.Optional.OPTIONAL));
+                    "Largest accepted Frame Streams data frame in bytes (one dnstap message; DNS messages are at most 64 KiB). "
+                            + "Kept between " + MIN_MAX_FRAME_SIZE + " and " + MAX_MAX_FRAME_SIZE + ".",
+                    ConfigurationField.Optional.OPTIONAL, NumberField.Attribute.ONLY_POSITIVE));
             return cr;
         }
     }

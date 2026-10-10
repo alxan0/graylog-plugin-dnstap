@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class DnstapCodecTest {
     static DnstapCodec codec(Map<String, Object> cfg) {
-        return new DnstapCodec(new Configuration(cfg), TestMessages.factory());
+        return new DnstapCodec(new Configuration(cfg), TestMessages.factory(), new com.codahale.metrics.MetricRegistry());
     }
 
     static Optional<Message> decode(DnstapCodec c, byte[] frame) {

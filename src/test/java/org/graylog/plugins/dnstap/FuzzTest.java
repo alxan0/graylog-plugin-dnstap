@@ -40,7 +40,7 @@ class FuzzTest {
     private static final InetSocketAddress REMOTE = new InetSocketAddress("10.251.2.53", 40000);
 
     private static DnstapCodec codec() {
-        return new DnstapCodec(new Configuration(Map.of()), TestMessages.factory());
+        return new DnstapCodec(new Configuration(Map.of()), TestMessages.factory(), new com.codahale.metrics.MetricRegistry());
     }
 
     /** Decode and classify: OK, EMPTY or REJECTED (InputProcessingException); anything else fails the test. */
@@ -112,11 +112,12 @@ class FuzzTest {
 
     @Test
     void decoderRejectsOversizedFrameFromItsHeader() {
-        final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20));
+        final com.codahale.metrics.MetricRegistry r = new com.codahale.metrics.MetricRegistry();
+        final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20, new FstrmMetrics(r)));
         // a header announcing 2 GiB: must fail immediately, without waiting for (or buffering) the payload
-        final DecoderException e = assertThrows(DecoderException.class, () -> ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0x7f, -1, -1, -1})));
-        assertTrue(e instanceof TooLongFrameException, e.toString());
+        ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0x7f, -1, -1, -1}));
         assertFalse(ch.isOpen(), "the connection is closed after a framing error");
+        assertEquals(1, r.counter("fstrm.errors.framing").getCount());
     }
 
     @Test
@@ -125,10 +126,11 @@ class FuzzTest {
                 hex("00000000" + "00000003" + "000000"),          // control length < 4
                 hex("00000000" + "00100000"),                     // control length 1 MiB
                 hex("00000000" + "00000004" + "000000ff")}) {     // unknown control type
-            final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20));
-            final DecoderException e = assertThrows(DecoderException.class, () -> ch.writeInbound(Unpooled.wrappedBuffer(bad)));
-            assertTrue(e instanceof CorruptedFrameException, e.toString());
+            final com.codahale.metrics.MetricRegistry r = new com.codahale.metrics.MetricRegistry();
+            final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20, new FstrmMetrics(r)));
+            ch.writeInbound(Unpooled.wrappedBuffer(bad));
             assertFalse(ch.isOpen());
+            assertEquals(1, r.counter("fstrm.errors.framing").getCount());
         }
     }
 
@@ -137,7 +139,8 @@ class FuzzTest {
         final Random rnd = new Random(SEED + 2);
         int frames = 0, rejected = 0;
         for (int i = 0; i < Math.max(1000, ITER / 15); i++) {
-            final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(64 * 1024));
+            final com.codahale.metrics.MetricRegistry reg = new com.codahale.metrics.MetricRegistry();
+            final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(64 * 1024, new FstrmMetrics(reg)));
             try {
                 for (int chunk = 0; chunk < 8 && ch.isOpen(); chunk++) {
                     final byte[] b = randomStreamChunk(rnd);
@@ -145,13 +148,11 @@ class FuzzTest {
                     ByteBuf f;
                     while ((f = ch.readInbound()) != null) { frames++; assertTrue(f.readableBytes() <= 64 * 1024); f.release(); }
                 }
-            } catch (DecoderException e) {
-                if (!(e instanceof CorruptedFrameException || e instanceof TooLongFrameException)) {
-                    fail("stream seed " + (SEED + 2) + " iteration " + i + ": unexpected " + e, e);
+                if (reg.counter("fstrm.errors.framing").getCount() > 0) {
+                    assertFalse(ch.isOpen(), "closed after a framing error");
+                    rejected++;
                 }
-                assertFalse(ch.isOpen(), "closed after " + e);
-                rejected++;
-            } catch (Throwable t) {
+            } catch (Throwable t) {   // framing errors are handled inside the decoder: anything thrown is a bug
                 fail("stream seed " + (SEED + 2) + " iteration " + i + ": unexpected " + t, t);
             } finally {
                 ch.releaseInbound();

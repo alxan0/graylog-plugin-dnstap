@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Health check of a Graylog Dnstap input (graylog-plugin-dnstap >= 1.0.2), Nagios/Icinga plugin conventions:
+# one status line with perfdata, exit 0 OK / 1 WARNING / 2 CRITICAL / 3 UNKNOWN. Works from cron, Nagios,
+# Icinga, Zabbix (external check), or by hand. Read-only: it only calls GET endpoints.
+#
+#   dnstap-health --url https://graylog.example:9000 --token TOKEN [--input-title Dnstap | --input-id ID]
+#                 [--bind-stats http://ns1:8053] [--min-rate 1] [--lag-warn 30000] [--lag-crit 120000]
+#                 [--state /var/tmp/dnstap-health.state]
+#   (--user U --password P instead of --token; or GRAYLOG_URL / GRAYLOG_TOKEN in the environment)
+#
+# Checks (CRITICAL first):
+#   input missing or not RUNNING                       CRITICAL
+#   no open connection (BIND/relay not connected)      CRITICAL
+#   message rate (1-min) below --min-rate msg/s        CRITICAL
+#   event lag p95 (Graylog processing time - DNS event time) above --lag-crit / --lag-warn ms
+#   new framing errors since the last run              WARNING   (connections were closed: corrupt data or a bad sender)
+#   new undecodable frames (codec failures) since the last run   WARNING
+#   BIND DNSTAPdropped grew since the last run (--bind-stats)    WARNING   (named's queue overflowed: events lost)
+# "since the last run" uses the --state file (counters are cumulative); the first run only records them.
+set -uo pipefail
+URL=${GRAYLOG_URL:-} TOKEN=${GRAYLOG_TOKEN:-} USER_="" PASS="" TITLE=Dnstap ID="" BIND_STATS=""
+MIN_RATE=1 LAG_WARN=30000 LAG_CRIT=120000 STATE=${TMPDIR:-/var/tmp}/dnstap-health.state
+while [ $# -gt 0 ]; do
+  case $1 in
+    --url) URL=$2; shift ;; --token) TOKEN=$2; shift ;; --user) USER_=$2; shift ;; --password) PASS=$2; shift ;;
+    --input-title) TITLE=$2; shift ;; --input-id) ID=$2; shift ;; --bind-stats) BIND_STATS=$2; shift ;;
+    --min-rate) MIN_RATE=$2; shift ;; --lag-warn) LAG_WARN=$2; shift ;; --lag-crit) LAG_CRIT=$2; shift ;;
+    --state) STATE=$2; shift ;; -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 3 ;;
+    *) echo "UNKNOWN - unknown option $1"; exit 3 ;;
+  esac
+  shift
+done
+[ -n "$URL" ] || { echo "UNKNOWN - --url is required"; exit 3; }
+command -v jq >/dev/null && command -v curl >/dev/null || { echo "UNKNOWN - curl and jq are required"; exit 3; }
+if [ -n "$TOKEN" ]; then AUTH=(-u "$TOKEN:token"); elif [ -n "$USER_" ]; then AUTH=(-u "$USER_:$PASS"); else echo "UNKNOWN - --token or --user/--password required"; exit 3; fi
+api() { curl -sS -m 15 "${AUTH[@]}" -H 'Accept: application/json' "${URL%/}$1"; }
+num() { local v; v=$(jq -r "$1" 2>/dev/null <<<"$2"); [[ $v =~ ^-?[0-9.]+([eE][-+]?[0-9]+)?$ ]] && printf '%.0f' "$v" || echo 0; }
+
+inputs=$(api /api/system/inputs) || { echo "UNKNOWN - Graylog API not reachable at $URL"; exit 3; }
+[ -n "$ID" ] || ID=$(jq -r --arg t "$TITLE" '[.inputs[]? | select(.title == $t and .type == "org.graylog.plugins.dnstap.DnstapInput")][0].id // empty' <<<"$inputs")
+[ -n "$ID" ] || { echo "CRITICAL - no Dnstap input titled '$TITLE'"; exit 2; }
+state=$(api /api/system/inputstates | jq -r --arg i "$ID" '[.states[]? | select(.id == $i) | .state][0] // "NOT-RUNNING"')
+P=org.graylog.plugins.dnstap.DnstapInput.$ID C=org.graylog.plugins.dnstap.DnstapCodec.$ID
+m() { api "/api/system/metrics/$1" 2>/dev/null || echo '{}'; }
+conns=$(num '.value' "$(m "$P.open_connections")")
+rate=$(jq -r '.m1_rate // 0' <<<"$(m "$P.incomingMessages")" 2>/dev/null || echo 0)   # meter: 1-minute rate
+lagp95=$(num '.p95 // 0' "$(m "$C.eventLagMs")")     # histogram (sampled 1 in 32 messages, recent-biased reservoir)
+framing=$(num '.count' "$(m "$P.fstrm.errors.framing")")
+failures=$(num '.count' "$(m "$C.failures")")
+frames=$(num '.count' "$(m "$P.fstrm.frames")")
+dropped=""
+if [ -n "$BIND_STATS" ]; then
+  dropped=$(curl -sS -m 10 "${BIND_STATS%/}/xml/v3/server" 2>/dev/null | tr '<' '\n' | sed -n 's/^counter name="DNSTAPdropped">//p' | head -1)
+  dropped=${dropped:-0}
+fi
+
+prev_framing="" prev_failures="" prev_dropped=""
+[ -f "$STATE" ] && . "$STATE" 2>/dev/null
+{ echo "prev_framing=$framing"; echo "prev_failures=$failures"; echo "prev_dropped=${dropped:-}"; } > "$STATE" 2>/dev/null || true
+
+code=0 msgs=()
+crit() { msgs+=("$1"); code=2; }
+warn() { msgs+=("$1"); [ "$code" -lt 1 ] && code=1; }
+[ "$state" = RUNNING ] || crit "input $state"
+[ "$conns" -ge 1 ] || crit "no sender connected"
+awk -v r="$rate" -v m="$MIN_RATE" 'BEGIN { exit !(r < m) }' && crit "rate $(printf '%.1f' "$rate") msg/s < $MIN_RATE"
+if [ "$lagp95" -gt "$LAG_CRIT" ]; then crit "event lag p95 ${lagp95} ms > $LAG_CRIT"; elif [ "$lagp95" -gt "$LAG_WARN" ]; then warn "event lag p95 ${lagp95} ms > $LAG_WARN"; fi
+# growth since the last run; a counter below its previous value was reset (input restarted: Graylog recreates the
+# input's metrics; named restarted: DNSTAPdropped starts at 0), so all of its current value is new
+grown() { [ -z "$2" ] && echo 0 && return; [ "$1" -ge "$2" ] && echo $(($1 - $2)) || echo "$1"; }
+n=$(grown "$framing" "$prev_framing");   [ "$n" -gt 0 ] && warn "$n new framing error(s)"
+n=$(grown "$failures" "$prev_failures"); [ "$n" -gt 0 ] && warn "$n new undecodable frame(s)"
+[ -n "$dropped" ] && { n=$(grown "$dropped" "$prev_dropped"); [ "$n" -gt 0 ] && warn "BIND dropped $n dnstap frame(s)"; }
+
+label=(OK WARNING CRITICAL)
+detail="rate=$(printf '%.0f' "$rate")/s conns=$conns lag_p95=${lagp95}ms frames=$frames framing_errors=$framing failures=$failures${dropped:+ bind_dropped=$dropped}"
+perf="rate=$(printf '%.1f' "$rate");$MIN_RATE: connections=$conns;1: lag_p95=${lagp95}ms;$LAG_WARN;$LAG_CRIT framing_errors=${framing}c failures=${failures}c${dropped:+ bind_dropped=${dropped}c}"
+if [ ${#msgs[@]} -eq 0 ]; then echo "DNSTAP ${label[$code]} - $detail | $perf"
+else echo "DNSTAP ${label[$code]} - $(IFS=';'; echo "${msgs[*]}") - $detail | $perf"; fi
+exit "$code"

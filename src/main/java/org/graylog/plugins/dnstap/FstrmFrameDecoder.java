@@ -38,10 +38,18 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
     private static final int MAX_CONTROL_LENGTH = 512;
 
     private final int maxFrameSize;
+    private final FstrmMetrics metrics;
     private boolean failed;
+    private boolean bidirectional;     // READY seen: the sender expects ACCEPT now and FINISH after STOP
+    private int sizeSample;
 
     public FstrmFrameDecoder(int maxFrameSize) {
+        this(maxFrameSize, FstrmMetrics.unregistered());
+    }
+
+    FstrmFrameDecoder(int maxFrameSize, FstrmMetrics metrics) {
         this.maxFrameSize = maxFrameSize;
+        this.metrics = metrics;
     }
 
     @Override
@@ -54,13 +62,20 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
             decodeFrames(ctx, in, out);
         } catch (CorruptedFrameException | TooLongFrameException e) {
             // A Frame Streams connection can't resynchronise after a framing error: everything after it would be
-            // misread. Discard the rest and close the connection once this decode call has returned (closing
-            // inside decode() would release the buffer Netty is still decoding from). The sender reconnects.
-            failed = true;
-            in.skipBytes(in.readableBytes());
-            ctx.executor().execute(ctx::close);
-            throw e;
+            // misread. Count it, log it once, discard the rest and close the connection once this decode call has
+            // returned (closing inside decode() would release the buffer Netty is still decoding from). Not
+            // rethrown: the plugin owns this case (Graylog would log a second, generic ERROR and close again).
+            // Frames decoded before the error are still delivered. The sender reconnects.
+            metrics.framingErrors.inc();
+            LOG.warn("Frame Streams framing error from {}, closing the connection: {}", ctx.channel().remoteAddress(), e.getMessage());
+            fail(ctx, in);
         }
+    }
+
+    private void fail(ChannelHandlerContext ctx, ByteBuf in) {
+        failed = true;
+        in.skipBytes(in.readableBytes());
+        ctx.executor().execute(ctx::close);
     }
 
     private void decodeFrames(ChannelHandlerContext ctx, ByteBuf in, List<Object> out) {
@@ -76,7 +91,7 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                 if (in.readableBytes() < 8 + controlLength) return;
                 in.skipBytes(8);
                 handleControl(ctx, in.readSlice((int) controlLength));
-                if (failed) {          // STOP: discard whatever follows
+                if (failed) {          // STOP or refused content type: discard whatever follows
                     in.skipBytes(in.readableBytes());
                     return;
                 }
@@ -87,6 +102,8 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
                 if (in.readableBytes() < 4 + length) return;
                 in.skipBytes(4);
                 out.add(in.readRetainedSlice((int) length));
+                metrics.frames.inc();
+                if ((++sizeSample & 31) == 0) metrics.frameSize.update(length);   // sampled: the reservoir locks
             }
         }
     }
@@ -95,21 +112,36 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
         final int type = control.readInt();
         switch (type) {
             case CONTROL_READY -> {
+                metrics.ready.inc();
                 final List<String> offered = contentTypes(control);
                 if (!offered.isEmpty() && !offered.contains(DNSTAP_CONTENT_TYPE)) {
-                    LOG.warn("Frame Streams sender {} offers content types {} but not {}", ctx.channel().remoteAddress(), offered, DNSTAP_CONTENT_TYPE);
+                    // the spec: the receiver must not ACCEPT a stream whose content type it doesn't understand
+                    metrics.framingErrors.inc();
+                    LOG.warn("Frame Streams sender {} offers content types {} but not {}: closing", ctx.channel().remoteAddress(), offered, DNSTAP_CONTENT_TYPE);
+                    failed = true;
+                    ctx.executor().execute(ctx::close);
+                    return;
                 }
+                bidirectional = true;
                 ctx.writeAndFlush(controlFrame(ctx, CONTROL_ACCEPT));
                 LOG.debug("Frame Streams READY from {}: sent ACCEPT", ctx.channel().remoteAddress());
             }
-            case CONTROL_START -> LOG.debug("Frame Streams START from {} ({})", ctx.channel().remoteAddress(), contentTypes(control));
+            case CONTROL_START -> {
+                metrics.start.inc();
+                LOG.debug("Frame Streams START from {} ({})", ctx.channel().remoteAddress(), contentTypes(control));
+            }
             case CONTROL_STOP -> {
-                LOG.debug("Frame Streams STOP from {}: sending FINISH", ctx.channel().remoteAddress());
-                // Nothing may follow STOP. Close only after this decode call has returned: the write can complete
-                // synchronously on the event loop, and closing inside decode() releases the buffer being decoded.
+                metrics.stop.inc();
+                // Nothing may follow STOP. FINISH is the receiver's answer in bidirectional mode only. Close once
+                // FINISH is written, and never inside this decode call: the write can complete synchronously on the
+                // event loop, and closing inside decode() releases the buffer being decoded.
                 failed = true;
-                ctx.writeAndFlush(controlFrame(ctx, CONTROL_FINISH));
-                ctx.executor().execute(ctx::close);
+                if (bidirectional) {
+                    LOG.debug("Frame Streams STOP from {}: sending FINISH", ctx.channel().remoteAddress());
+                    ctx.writeAndFlush(controlFrame(ctx, CONTROL_FINISH)).addListener(f -> ctx.executor().execute(ctx::close));
+                } else {
+                    ctx.executor().execute(ctx::close);
+                }
             }
             case CONTROL_ACCEPT, CONTROL_FINISH -> { /* only meaningful for the sending side */ }
             default -> throw new CorruptedFrameException("unknown Frame Streams control type " + type);

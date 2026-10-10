@@ -47,6 +47,16 @@ public class DnstapInput extends MessageInput {
         public Descriptor() {
             super(NAME, false, "https://dnstap.info/");
         }
+
+        @Override
+        public String getDescription() {
+            return "dnstap from BIND, Unbound, Knot, PowerDNS or CoreDNS, as Frame Streams over TCP/TLS (e.g. via a socat relay from the server's Unix socket)";
+        }
+
+        @Override
+        public boolean isForwarderCompatible() {
+            return false;
+        }
     }
 
     @ConfigClass

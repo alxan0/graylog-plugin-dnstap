@@ -18,6 +18,7 @@ import java.util.List;
 final class DnsMessage {
     private static final int MAX_ANSWERS = 32;
     private static final int MAX_POINTER_JUMPS = 64;
+    private static final int MAX_RDATA_TEXT = 256;
 
     int id;
     int flags;
@@ -181,7 +182,8 @@ final class DnsMessage {
             default -> rdlen + "b";
         };
         pos = rdStart + rdlen;
-        return typeName(type) + " " + data;
+        // bounded: the joined answers end up in a keyword field (OpenSearch rejects terms > 32766 bytes)
+        return typeName(type) + " " + (data.length() > MAX_RDATA_TEXT ? data.substring(0, MAX_RDATA_TEXT) + "…" : data);
     }
 
     private String ip(int at, int len) {
