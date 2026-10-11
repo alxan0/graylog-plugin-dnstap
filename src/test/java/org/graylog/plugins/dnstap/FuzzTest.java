@@ -163,7 +163,7 @@ class FuzzTest {
         System.out.println("decoder fuzz: frames=" + frames + " rejected streams=" + rejected);
     }
 
-    private static byte[] mutate(byte[] src, Random rnd) {
+    static byte[] mutate(byte[] src, Random rnd) {
         byte[] b = src.clone();
         final int n = 1 + rnd.nextInt(8);
         for (int k = 0; k < n && b.length > 0; k++) {

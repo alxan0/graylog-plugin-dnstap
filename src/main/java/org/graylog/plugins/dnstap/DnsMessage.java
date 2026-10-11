@@ -286,7 +286,7 @@ final class DnsMessage {
             if (!sb.isEmpty()) {
                 sb.append(' ');
             }
-            sb.append('"').append(new String(b, p + 1, l, StandardCharsets.UTF_8)).append('"');
+            Text.appendQuoted(sb, new String(b, p + 1, l, StandardCharsets.UTF_8));
             p += 1 + l;
         }
         return sb.toString();

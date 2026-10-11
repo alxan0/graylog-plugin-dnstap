@@ -132,7 +132,7 @@ Besides Graylog's usual bind address, port, TLS, receive buffer, worker threads 
 
 | Setting | Default | |
 |---|---|---|
-| Maximum frame size | 1 MiB | clamped to 65,535 + 1,024 B … 16 MiB; a bigger frame is a framing error and closes the connection |
+| Maximum frame size | 256 KiB | clamped to 65,535 + 1,024 B … 16 MiB; a bigger frame is a framing error and closes the connection. A complete dnstap frame is at most ~130 KB; the limit also bounds the memory an incomplete frame can hold per connection |
 | Include answers | on | the `answers` field of responses (capped at 8 KiB of text, each rdata at 256 characters) |
 | Skip message types | empty | e.g. `CR,AR`: dropped at the input, counted in the `skipped` metric |
 | TCP keepalive (Graylog's setting) | **on** for new inputs | lets the kernel close connections whose relay vanished without closing them (host down, network cut). Inputs created with 1.0.3 or older keep their stored value: enable it there |

@@ -31,7 +31,9 @@ import java.util.concurrent.Callable;
 public class FstrmTransport extends AbstractTcpTransport {
     static final String CK_MAX_FRAME_SIZE = "max_frame_size";
     static final int DEFAULT_PORT = 6000;
-    static final int DEFAULT_MAX_FRAME_SIZE = 1024 * 1024;
+    // A dnstap frame holds at most a 64 KiB query, a 64 KiB response and a small envelope (~130 KB). The limit is also
+    // how much an incomplete frame may hold in memory per connection, so it stays near that size.
+    static final int DEFAULT_MAX_FRAME_SIZE = 256 * 1024;
     static final int MIN_MAX_FRAME_SIZE = 65_535 + 1024;
     static final int MAX_MAX_FRAME_SIZE = 16 * 1024 * 1024;
 

@@ -121,8 +121,9 @@ final class DnstapFrame {
         };
     }
 
+    // identity and version are chosen by the sender and end up in fields (identity becomes the message source)
     private static String utf8(byte[] b) {
-        return new String(b, StandardCharsets.UTF_8);
+        return Text.escapeControls(new String(b, StandardCharsets.UTF_8));
     }
 
     // names as in dnstap.proto; short codes as printed by dnstap-read

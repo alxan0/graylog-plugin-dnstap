@@ -27,7 +27,7 @@ class DecodeThroughputTest {
         long n = 0;
         for (int warm = 0; warm < 200; warm++) for (byte[] f : frames) new DnstapCodec(new Configuration(cfg), mf, registry).decodeSafe(new RawMessage(f, remote));
         final long t0 = System.nanoTime();
-        while (System.nanoTime() - t0 < 5_000_000_000L) {
+        while (System.nanoTime() - t0 < Long.getLong("bench.seconds", 5) * 1_000_000_000L) {
             for (byte[] f : frames) { new DnstapCodec(new Configuration(cfg), mf, registry).decodeSafe(new RawMessage(f, remote)); n++; }
         }
         final double s = (System.nanoTime() - t0) / 1e9;
