@@ -1,4 +1,4 @@
-# graylog-plugin-dnstap 1.0.3: production readiness
+# graylog-plugin-dnstap 1.0.6: production readiness
 
 Tested on 2026-10-10/11 in a lab built like a production deployment:
 - Graylog 7.1.10 with one Data Node and a MongoDB cluster (Graylog heap 2 GB)
@@ -13,19 +13,33 @@ Every test used the **recommended setup** (see the README):
 The load came from `dnsperf` with uniquely named queries. Each query was counted exactly at every hop: dnsperf, BIND's
 counters, the input's counters, and an exact OpenSearch count by query name.
 
-## 1.0.4
+## 1.0.4 – 1.0.6
 
-1.0.4 is 1.0.3 plus the fixes from static analysis and a review for long uptime (README, "Static analysis" and
-"Changelog"). It doesn't touch the data path's design; the changes are metric cleanup, keepalive, close handling and
-log sanitising. It was re-verified as follows:
-- **Unit tests:** 29 pass, including 5 new ones for the fixes.
-- **Static analysis:** Error Prone, SpotBugs + FindSecBugs and PMD; every remaining finding was reviewed.
-- **Real Graylog 7.1.10, metric cleanup:** the codec metrics are removed when the input stops and come back after a
-  restart; Graylog's own metrics stay; 200 of 200 queries were delivered afterwards.
-- **TLS test:** all 6 cases pass.
-- **Monitoring fault test:** all checks pass.
+- **1.0.4:** fixes from static analysis and a review for long uptime (metric cleanup, keepalive, close handling, log
+  sanitising).
+- **1.0.5:** fixes a CPU amplification. A crafted 400 KB frame took 146 ms to decode; it now takes under 1 ms.
+- **1.0.6:** escapes sender-chosen text in fields and lowers the default frame limit to 256 KiB.
 
-The restart, throughput and soak results below are from 1.0.3. 1.0.4 changes nothing on that path.
+None of them changes the data path's design.
+
+**Re-verified on 1.0.6:**
+
+| Test | Result |
+|---|---|
+| Unit tests | 37 pass, including CPU worst cases, buffer lifecycle and field injection |
+| Unit tests under Netty's paranoid leak detector, 3,000,000 fuzz iterations | 0 leak reports, 0 reference-count errors |
+| Buffer lifecycle on pooled direct memory: every decoder path, 20,000 mutated streams (3.5M frames) | every buffer released exactly once |
+| Static analysis: Error Prone, SpotBugs + FindSecBugs, PMD | no new findings; the remaining ones are reviewed in the README |
+| Live, against Graylog 7.1.10 with Netty's paranoid leak detector | TLS 6/6; restarts lost input stop 1, Graylog restart 32, relay kill 24, named restart 0, all recovered by themselves; monitoring 9/9; quick throughput 1k/4k/8k q/s at 100.000 %; 0 leak reports, and every ERROR line came from a fault the tests injected |
+| **3 h soak at 5,000 q/s over TLS**, queue + retry, paranoid leak detector | **54,000,000 answered, 54,000,000 delivered, 0 lost**; 36/36 windows OK; 0 BIND drops, 0 decode failures |
+| Graylog log during the soak | 238 lines: 0 ERROR, 0 WARN, 0 leak reports |
+| Resources over 3 h (first vs last hour) | old gen after GC 203 → 186 MB, heap 885 → 737 MB, Graylog RSS 2.24 → 2.02 GB, threads 428 → 428, FDs 342 → 341: no growth |
+| Journal during the soak | median 1 uncommitted message; peaks up to 13,648 (< 3 s of traffic) during index rotations, always drained |
+
+A CPU profile under 8,000 messages/s puts the plugin at 1.3 % of Graylog's CPU, so faster plugin code wouldn't
+change capacity.
+
+The full-profile throughput run and the 1 h soak below are from 1.0.3.
 
 ## Verdict
 

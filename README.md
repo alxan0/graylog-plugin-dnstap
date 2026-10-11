@@ -10,7 +10,7 @@ syslog/UDP, measured on the same lab:
 - **~1.5× the end-to-end throughput** over plain TCP; about equal with TLS, where Graylog is the limit
 - a Graylog restart costs **~31 events instead of ~27,000**, with the recommended relay settings
 
-Version **1.0.4**, built and tested against **Graylog 7.1.10** and **BIND 9.20** (Debian 13). See
+Version **1.0.6**, built and tested against **Graylog 7.1.10** and **BIND 9.20** (Debian 13). See
 [READINESS.md](READINESS.md) for the full test results.
 
 This is a rewrite of [sega-yarkin/graylog-plugin-dnstap](https://github.com/sega-yarkin/graylog-plugin-dnstap)
@@ -18,7 +18,7 @@ This is a rewrite of [sega-yarkin/graylog-plugin-dnstap](https://github.com/sega
 The original can't load on Graylog 7.x. It uses Netty 3, `javax.inject`, the Graylog 2.x codec and input APIs and
 protobuf 3.0.
 
-| | Original 0.0.2 | This plugin 1.0.4 |
+| | Original 0.0.2 | This plugin 1.0.6 |
 |---|---|---|
 | Graylog API | 2.x (Netty 3, `javax.inject`, `new Message(...)`) | 7.1 (Netty 4 `AbstractTcpTransport`, `jakarta.inject`, `MessageFactory`, `decodeSafe` + `InputProcessingException`) |
 | Frame Streams | READY → ACCEPT; STOP ignored | full handshake (READY/ACCEPT/START/STOP/FINISH), unidirectional streams, content-type check, frame size limit |
@@ -41,6 +41,7 @@ protobuf 3.0.
 - [Build from source](#build-from-source)
 - [Tests](#tests)
 - [Static analysis](#static-analysis)
+- [Security](#security)
 - [Changelog](#changelog)
 - [License](#license)
 
@@ -55,12 +56,12 @@ Frame Streams handshake passes through it unchanged. The relay runs on the DNS s
 
 ## Install on Graylog
 
-Download `graylog-plugin-dnstap-1.0.4.jar` from the releases, or [build it](#build-from-source).
+Download `graylog-plugin-dnstap-1.0.6.jar` from the releases, or [build it](#build-from-source).
 
 1. Copy the jar to the plugin directory on **every Graylog node**: `plugin_dir` in `server.conf`, normally
    `/usr/share/graylog-server/plugin/` for package installs and `/usr/share/graylog/plugin/` in the Docker image.
    Keep **only one** jar of this plugin there; two versions of the same plugin conflict at startup.
-2. Restart Graylog. The log shows `Loaded plugin: Dnstap Input 1.0.4`.
+2. Restart Graylog. The log shows `Loaded plugin: Dnstap Input 1.0.6`.
 3. For TLS (recommended), put the server certificate, its key (PKCS#8 PEM) and the CA certificate somewhere the
    `graylog` user can read, e.g. `/etc/graylog/server/dnstap-tls/`. No internal CA? Use
    [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) `graylog.example.org`. It creates the CA, the server
@@ -243,13 +244,18 @@ The plugin itself decodes ~240k frames/s per core, and BIND + relay export lossl
 Graylog/OpenSearch**: size them for your peak query rate. Beyond their capacity the journal grows: no loss, but
 delay. Storage is about 200 bytes per event in OpenSearch.
 
+A CPU profile of the bench Graylog under 8,000 dnstap messages/s (JFR, all threads) puts the plugin at **1.3 %** of
+Graylog's CPU. Most of the rest is Graylog's output stage, which serialises messages to JSON for OpenSearch. Making
+the plugin faster wouldn't change the system's capacity. For more throughput, give Graylog/OpenSearch more cores, or
+add nodes.
+
 ## Build from source
 ```bash
 ./build.sh
 ```
 - Needs only Docker: the build runs Maven + JDK 21 in `maven:3.9.9-eclipse-temurin-21`.
 - It extracts `graylog.jar` from the `graylog/graylog:7.1.10` image, compiles against it and runs the unit tests.
-- Output: `dist/graylog-plugin-dnstap-1.0.4.jar`.
+- Output: `dist/graylog-plugin-dnstap-1.0.6.jar`.
 
 Variants:
 - `./build.sh bench` adds the codec throughput micro-benchmark.
@@ -268,11 +274,12 @@ Layout (`src/main/java/org/graylog/plugins/dnstap/`):
 | `DnstapCodec` | dnstap → Graylog message fields |
 | `DnstapFrame`, `ProtoReader` | protobuf |
 | `DnsMessage` | DNS wire format |
+| `Text` | escaping of sender-chosen text in fields |
 
 Unit tests and a real BIND 9.20.29 dnstap capture (629 frames) are in `src/test/`.
 
 ## Tests
-**In this repository** (`./build.sh`): 24 unit tests on the BIND capture, covering:
+**In this repository** (`./build.sh`): 37 unit tests on the BIND capture, covering:
 - frame decoding fed in random chunks
 - the full handshake
 - message-type counts equal to `dnstap-read`
@@ -283,6 +290,14 @@ Unit tests and a real BIND 9.20.29 dnstap capture (629 frames) are in `src/test/
     `InputProcessingException`, each in under 100 ms
   - random byte streams into the frame decoder: only framing exceptions, and the connection closed
   - hostile DNS messages: compression loops, overlong labels, short records
+- crafted worst cases for CPU cost (`AdversarialCostTest`), e.g. 65,535 questions pointing at one long name: each
+  decodes in under 50 ms (in practice under 1 ms)
+- buffer reference counting (`BufferLifecycleTest`), on pooled direct memory as in Graylog: on every decoder path,
+  and for 20,000 mutated streams, every buffer is released exactly once. That covers the inputs, Netty's cumulation
+  buffers and the handshake frames. A leak, a double release or a use after release fails the test.
+- escaping of sender-chosen text (`FieldInjectionTest`)
+
+The full suite also runs clean with Netty's leak detector at paranoid level and 3,000,000 fuzz iterations.
 
 **In a production-like lab** (Graylog 7.1.10 + Data Node + MongoDB cluster, BIND 9.20.29; the lab harness isn't part
 of this repository):
@@ -292,6 +307,8 @@ of this repository):
 - the web UI
 - stepped throughput benchmarks with exact per-query counting
 - a 1 h soak at 3,000 q/s over TLS: 10,800,000 of 10,800,000 delivered, resources stable
+- a 3 h soak at 5,000 q/s over TLS with Netty's paranoid leak detector, on 1.0.6: 54,000,000 of 54,000,000 delivered,
+  0 leak reports, no resource growth
 
 Results and findings are in [READINESS.md](READINESS.md).
 
@@ -328,7 +345,50 @@ stop only Graylog's own remain, and after a restart the plugin's come back, with
 
 The 1 h soak (see READINESS.md) showed no growth in heap, threads, file descriptors or RSS.
 
+## Security
+**What a sender controls:** the bytes on the TCP connection. With *TLS client authentication: required*, which is
+recommended, only holders of a certificate from your CA get past Graylog's TLS layer to the plugin; firewall the port
+anyway.
+
+**What the plugin does with them:** it parses them into strings and numbers and nothing else. It has no file,
+process, reflection, deserialisation or outbound network access, and `InetAddress.getByAddress` only formats
+addresses, without DNS lookups. So no input can make the plugin execute anything or reach beyond its message fields.
+The analysers above and a manual review checked for such APIs.
+
+**Limits on what one connection can cost:**
+
+| Resource | Limit |
+|---|---|
+| Memory for an incomplete frame | *Maximum frame size* (default 256 KiB), per connection |
+| Control frame | 512 bytes |
+| DNS name | 1,024 characters |
+| Pointer jumps per name | 64 |
+| Answers shown | 32, each rdata cut at 256 characters, all answers at 8 KiB of text |
+| CPU per frame | linear in the frame size, including crafted worst cases (see Tests) |
+
+A framing error or a READY with a foreign content type closes the connection.
+
+**Text injection:** control characters in sender-chosen text become `\DDD`: identity (the message `source`), version
+and TXT answers, which are in RFC 1035 presentation format. DNS names are in presentation format anyway. Content types
+that end up in Graylog's log are reduced to printable ASCII. Line breaks and terminal escapes therefore can't reach
+text-based outputs or log files.
+
+**Out of the plugin's hands:**
+- TLS itself, connection limits and the input's worker threads: Graylog configures and runs them.
+- Graylog writes two ERROR lines, with the frame's ID, for every undecodable frame, so a misbehaving
+  (authenticated) sender can make the server log noisy. Watch the `failures` metric; `dnstap-health` warns on it.
+
 ## Changelog
+**1.0.6** hardens the plugin against sender input:
+- Sender-chosen text is escaped: control characters in identity, version and TXT become `\DDD`.
+- The default *Maximum frame size* drops from 1 MiB to 256 KiB, because it bounds the memory an incomplete frame
+  can hold per connection. Existing inputs keep their stored value.
+- New tests: buffer lifecycle and field injection. 37 tests.
+
+**1.0.5** fixes CPU amplification. A crafted 400 KB message with 65,535 questions pointing at one long name took
+~146 ms to decode, about 7 frames/s per core; it now takes under 1 ms. Extra questions and owner names are skipped
+as wire bytes, without being decoded.
+
 **1.0.4** brings fixes from static analysis and a review for long uptime:
 - When an input is stopped or deleted, its codec metrics are removed. Before, they stayed in Graylog's registry until
   restart, with a cache entry for every input ever created.
