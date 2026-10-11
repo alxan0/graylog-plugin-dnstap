@@ -29,7 +29,7 @@ None of them changes the data path's design.
 | Unit tests | 37 pass, including CPU worst cases, buffer lifecycle and field injection |
 | Unit tests under Netty's paranoid leak detector, 3,000,000 fuzz iterations | 0 leak reports, 0 reference-count errors |
 | Buffer lifecycle on pooled direct memory: every decoder path, 20,000 mutated streams (3.5M frames) | every buffer released exactly once |
-| Static analysis: Error Prone, SpotBugs + FindSecBugs, PMD | no new findings; the remaining ones are reviewed in the README |
+| Static analysis: Error Prone, SpotBugs + FindSecBugs, PMD | no new findings; the remaining ones are reviewed in docs/reference.md |
 | Live, against Graylog 7.1.10 with Netty's paranoid leak detector | TLS 6/6; restarts lost input stop 1, Graylog restart 32, relay kill 24, named restart 0, all recovered by themselves; monitoring 9/9; quick throughput 1k/4k/8k q/s at 100.000 %; 0 leak reports, and every ERROR line came from a fault the tests injected |
 | **3 h soak at 5,000 q/s over TLS**, queue + retry, paranoid leak detector | **54,000,000 answered, 54,000,000 delivered, 0 lost**; 36/36 windows OK; 0 BIND drops, 0 decode failures |
 | Graylog log during the soak | 238 lines: 0 ERROR, 0 WARN, 0 leak reports |
