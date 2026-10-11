@@ -27,7 +27,7 @@ named -> /run/named/dnstap.sock -> socat (TLS) -> Graylog Dnstap input :6000
    installs, `/usr/share/graylog/plugin/` in Docker) and restart Graylog. Keep only one version of the jar there.
 3. Create the input under System > Inputs > *Dnstap (Frame Streams/TCP)*, port 6000. For TLS, set the server
    certificate and key, and set *TLS client authentication* to *required* with your CA as trusted certs.
-   No CA at hand? [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) creates one, plus the server and client
+   [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) can be used to create one CA cert, plus the server and client
    certificates.
 
 **BIND**
