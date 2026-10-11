@@ -76,8 +76,7 @@ Sergey I. Yarkin, which was written for Graylog 2.x and no longer loads on curre
 [Graylog community thread](https://community.graylog.org/t/dnstap-input-plugin/22770)). Thanks also to the
 [dnstap](https://dnstap.info/) project for the format and the Frame Streams protocol.
 
-The port to the Graylog 7.1 plugin API, and the testing behind it, was done with the help of Claude, Anthropic's AI
-assistant.
+The port to the Graylog 7.1 plugin API, and the testing behind it, was done with the help of Claude.
 
 It isn't affiliated with Graylog, Inc. or ISC.
 
