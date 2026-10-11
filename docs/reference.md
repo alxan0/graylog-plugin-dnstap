@@ -63,6 +63,9 @@ Notes on these metrics:
 - A lag p95 of about **1 s at low rates is normal**: named sends a partly filled buffer once per
   `fstrm-set-output-flush-timeout` (default 1 s).
 - Counters restart at 0 when the input restarts. When an input is stopped or deleted, its metrics are removed.
+- Watch Graylog's `jvm.threads.count` too. Graylog 7.1.10 leaks the worker threads of its own TCP inputs on every
+  input restart (the Dnstap input works around this since 1.0.7), so a count that keeps rising points to inputs being
+  restarted often.
 - Also watch BIND's `DNSTAPdropped` counter (statistics channel, `/xml/v3/server`): frames named dropped because its
   queue was full.
 
@@ -220,6 +223,7 @@ API and style issues. That leaves 7 SpotBugs, 3 Error Prone and 5 PMD findings, 
 | Error Prone `NonApiType` / PMD `LooseCoupling` (`LinkedHashMap`) | the type is fixed by the Graylog method being overridden |
 | Error Prone `NonCanonicalType` (`AbstractCodec.Factory`) | the form Graylog's own codecs use |
 | Error Prone `FutureReturnValueIgnored` in `FuzzTest` | closing a test channel during teardown; nothing to check |
+| PMD `CloseResource` in `WorkerGroupFactory` | the pool is shut down by the event loop group's termination listener, which PMD can't follow |
 
 On top of the tools, a review looked for problems that only show up after long uptime or many configuration changes
 (fixed in 1.0.4, covered by `LongRunningSafetyTest`):

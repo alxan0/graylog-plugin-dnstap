@@ -1,4 +1,4 @@
-# graylog-plugin-dnstap 1.0.6: production readiness
+# graylog-plugin-dnstap 1.0.7: production readiness
 
 Tested on 2026-10-10/11 in a lab built like a production deployment:
 - Graylog 7.1.10 with one Data Node and a MongoDB cluster (Graylog heap 2 GB)
@@ -12,6 +12,27 @@ Every test used the **recommended setup** (see the README):
 
 The load came from `dnsperf` with uniquely named queries. Each query was counted exactly at every hop: dnsperf, BIND's
 counters, the input's counters, and an exact OpenSearch count by query name.
+
+## 1.0.7: leak test and fixes
+
+A leak test on 1.0.6 stopped and started the input 120 times under 2,000 q/s, created and deleted a second input 100
+times, killed the relay 40 times and restarted BIND 8 times. It took class histograms and a heap dump from the live
+Graylog, with Netty's paranoid leak detector on. It found no leak in the plugin's data path, and two leaks around
+input restarts, both fixed in 1.0.7:
+
+| Finding | 1.0.6 | 1.0.7 (same test) |
+|---|---|---|
+| Graylog 7.1.10 never shuts down an input's worker thread pool; every TCP input leaks its worker threads and old transport on each start | +12 threads and +0.7 MB heap per restart | flat over 60 restarts (211 -> 255 threads as the worker loops start once, then no growth); Graylog's own GELF input, as a control, still +12 per restart |
+| Deleting an input while its messages wait in the journal re-creates its codec metrics | 11 metrics per input, forever | 0 |
+| Netty leak reports, Graylog ERRORs | 0, 0 | 0, 0 |
+
+In-process, 1,000 inputs created and stopped with 2.3M frames:
+- **Heap after GC:** 48,720 -> 48,742 KB.
+- **Registry and cache:** only the permanent input's metrics, 1 cache entry.
+- **Direct memory and leaks:** constant, 0 leak reports.
+
+Still open in Graylog, not in the plugin: Graylog keeps its own two per-input decoding metrics (`parseTime`,
+`processedMessages`) after an input is deleted.
 
 ## 1.0.4 to 1.0.6
 

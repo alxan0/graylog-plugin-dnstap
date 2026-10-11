@@ -10,13 +10,13 @@ import io.netty.channel.EventLoopGroup;
 import jakarta.inject.Inject;
 import org.graylog2.configuration.TLSProtocolsConfiguration;
 import org.graylog2.inputs.transports.NettyTransportConfiguration;
-import org.graylog2.inputs.transports.netty.EventLoopGroupFactory;
 import org.graylog2.plugin.LocalMetricRegistry;
 import org.graylog2.plugin.configuration.Configuration;
 import org.graylog2.plugin.configuration.ConfigurationRequest;
 import org.graylog2.plugin.configuration.fields.ConfigurationField;
 import org.graylog2.plugin.configuration.fields.NumberField;
 import org.graylog2.plugin.inputs.MessageInput;
+import org.graylog2.plugin.inputs.MisfireException;
 import org.graylog2.plugin.inputs.annotations.ConfigClass;
 import org.graylog2.plugin.inputs.annotations.FactoryClass;
 import org.graylog2.plugin.inputs.transports.AbstractTcpTransport;
@@ -43,17 +43,30 @@ public class FstrmTransport extends AbstractTcpTransport {
     @Inject
     public FstrmTransport(@Assisted Configuration configuration,
                           EventLoopGroup eventLoopGroup,
-                          EventLoopGroupFactory eventLoopGroupFactory,
                           NettyTransportConfiguration nettyTransportConfiguration,
                           ThroughputCounter throughputCounter,
                           LocalMetricRegistry localRegistry,
                           TLSProtocolsConfiguration tlsConfiguration,
                           EncryptedValueService encryptedValueService) {
-        super(configuration, throughputCounter, localRegistry, eventLoopGroup, eventLoopGroupFactory,
+        // WorkerGroupFactory instead of Graylog's EventLoopGroupFactory, whose worker thread pools are never shut down
+        super(configuration, throughputCounter, localRegistry, eventLoopGroup, new WorkerGroupFactory(nettyTransportConfiguration),
                 nettyTransportConfiguration, tlsConfiguration, encryptedValueService);
         // clamped: a DNS message is at most 64 KiB (+ dnstap envelope); a value of 0 or less would reject every frame
         this.maxFrameSize = Math.min(MAX_MAX_FRAME_SIZE, Math.max(MIN_MAX_FRAME_SIZE, configuration.getInt(CK_MAX_FRAME_SIZE, DEFAULT_MAX_FRAME_SIZE)));
         this.metrics = new FstrmMetrics(localRegistry);   // Graylog publishes this registry under the input
+    }
+
+    @Override
+    public void launch(MessageInput input) throws MisfireException {
+        throughputCounter.trafficCounter().start();   // no-op unless this transport was stopped before
+        super.launch(input);
+    }
+
+    @Override
+    public void stop() {
+        super.stop();
+        // Graylog never releases it: its once-a-second task would keep running, holding this transport, forever
+        throughputCounter.release();
     }
 
     @Override

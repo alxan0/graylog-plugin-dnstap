@@ -62,6 +62,11 @@ public class DnstapCodec extends AbstractCodec {
     // so everything computed once lives in static caches: per-input metrics and parsed skip lists.
     private static final ConcurrentMap<MetricRegistry, ConcurrentMap<String, CodecMetrics>> METRICS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Set<String>> SKIP_TYPES = new ConcurrentHashMap<>();
+    // Inputs running on this node. Graylog still decodes messages of a stopped or deleted input that wait in its
+    // journal; registering metrics for those would re-create them after the input removed them, for good.
+    private static final Set<String> RUNNING = ConcurrentHashMap.newKeySet();
+    // counts the messages of inputs that aren't running, in a registry that nobody publishes
+    private static final CodecMetrics DETACHED = new CodecMetrics(new MetricRegistry(), "detached");
 
     private final MessageFactory messageFactory;
     private final MetricRegistry metricRegistry;
@@ -274,10 +279,33 @@ public class DnstapCodec extends AbstractCodec {
     }
 
     private CodecMetrics metrics(RawMessage raw) {
-        final String input = raw.getInputIdOnCurrentNode().orElse("unknown");
+        final Optional<String> inputId = raw.getInputIdOnCurrentNode();
+        // without an input id (not from an input, e.g. in tests) the metrics go under "unknown"
+        if (inputId.isPresent() && !RUNNING.contains(inputId.get())) {
+            return DETACHED;
+        }
+        final String input = inputId.orElse("unknown");
         final ConcurrentMap<String, CodecMetrics> byInput = METRICS.computeIfAbsent(metricRegistry, r -> new ConcurrentHashMap<>());
-        final CodecMetrics m = byInput.get(input);
-        return m != null ? m : byInput.computeIfAbsent(input, id -> new CodecMetrics(metricRegistry, id));
+        CodecMetrics m = byInput.get(input);
+        if (m == null) {
+            m = byInput.computeIfAbsent(input, id -> new CodecMetrics(metricRegistry, id));
+            if (inputId.isPresent() && !RUNNING.contains(input)) {
+                removeMetrics(metricRegistry, input);   // the input stopped while these were being registered
+                return DETACHED;
+            }
+        }
+        return m;
+    }
+
+    /** The input runs on this node from now on: its messages get metrics. */
+    static void inputStarted(String inputId) {
+        RUNNING.add(inputId);
+    }
+
+    /** The input stopped or was deleted: removes its metrics, and its messages still in Graylog's journal get none. */
+    static void inputStopped(MetricRegistry registry, String inputId) {
+        RUNNING.remove(inputId);
+        removeMetrics(registry, inputId);
     }
 
     private static String base(String inputId) {

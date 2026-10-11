@@ -7,10 +7,13 @@ package org.graylog.plugins.dnstap;
 import com.codahale.metrics.MetricRegistry;
 import com.google.inject.assistedinject.Assisted;
 import jakarta.inject.Inject;
+import org.graylog2.plugin.InputFailureRecorder;
 import org.graylog2.plugin.LocalMetricRegistry;
 import org.graylog2.plugin.ServerStatus;
 import org.graylog2.plugin.configuration.Configuration;
+import org.graylog2.plugin.buffers.InputBuffer;
 import org.graylog2.plugin.inputs.MessageInput;
+import org.graylog2.plugin.inputs.MisfireException;
 import org.graylog2.plugin.inputs.annotations.ConfigClass;
 import org.graylog2.plugin.inputs.annotations.FactoryClass;
 
@@ -38,15 +41,21 @@ public class DnstapInput extends MessageInput {
     }
 
     @Override
+    public void launch(InputBuffer buffer, InputFailureRecorder failureRecorder) throws MisfireException {
+        DnstapCodec.inputStarted(getId());
+        super.launch(buffer, failureRecorder);
+    }
+
+    @Override
     public void stop() {
         super.stop();
-        DnstapCodec.removeMetrics(metricRegistry, getId());
+        DnstapCodec.inputStopped(metricRegistry, getId());
     }
 
     @Override
     public void terminate() {
         super.terminate();
-        DnstapCodec.removeMetrics(metricRegistry, getId());
+        DnstapCodec.inputStopped(metricRegistry, getId());
     }
 
     @FactoryClass

@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.graylog.plugins.dnstap</groupId>
     <artifactId>graylog-plugin-dnstap</artifactId>
-    <version>1.0.6</version>
+    <version>1.0.7</version>
     <packaging>jar</packaging>
     <name>graylog-plugin-dnstap</name>
     <description>Dnstap (Frame Streams over TCP) input for Graylog 7.1</description>

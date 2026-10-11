@@ -1,5 +1,14 @@
 # Changelog
 
+**1.0.7** fixes leaks found by a leak test with input stop/start cycles:
+- Graylog 7.1.10 never shuts down an input's worker thread pool, so every start of a TCP input leaves its worker
+  threads (12 by default) and the old transport behind: about 0.7 MB of heap per restart, for every TCP input. The
+  Dnstap input now builds its worker group like Graylog does, but shuts the pool down when the group stops. It also
+  releases the input's throughput counter on stop, which Graylog leaves running.
+- Deleting an input while some of its messages still waited in Graylog's journal re-created 11 of its metrics for
+  good. Metrics are now only created for inputs that are running.
+- New tests: input lifecycle (metrics and worker threads), and an opt-in long leak soak (`LeakSoakTest`).
+
 **1.0.6** hardens the plugin against sender input:
 - Sender-chosen text is escaped: control characters in identity, version and TXT become `\DDD`.
 - The default *Maximum frame size* drops from 1 MiB to 256 KiB, because it bounds the memory an incomplete frame
