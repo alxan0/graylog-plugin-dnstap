@@ -32,7 +32,7 @@ public class DnstapPluginMetaData implements PluginMetaData {
 
     @Override
     public URI getURL() {
-        return URI.create("https://github.com/sega-yarkin/graylog-plugin-dnstap");
+        return URI.create("https://github.com/alxan0/graylog-plugin-dnstap");
     }
 
     @Override
