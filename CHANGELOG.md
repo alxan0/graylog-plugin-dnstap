@@ -40,4 +40,4 @@ message, so the metrics, the parsed skip list and the sampling counters live in 
 - MX rdata is bounds-checked.
 - Any unexpected exception becomes a per-frame `InputProcessingException`.
 
-**1.0.0** was the rewrite for the Graylog 7.1 plugin API.
+**1.0.0** was the rewrite for the Graylog 7.1 plugin API, done with the help of Claude (Anthropic).

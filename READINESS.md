@@ -13,7 +13,7 @@ Every test used the **recommended setup** (see the README):
 The load came from `dnsperf` with uniquely named queries. Each query was counted exactly at every hop: dnsperf, BIND's
 counters, the input's counters, and an exact OpenSearch count by query name.
 
-## 1.0.4 – 1.0.6
+## 1.0.4 to 1.0.6
 
 - **1.0.4:** fixes from static analysis and a review for long uptime (metric cleanup, keepalive, close handling, log
   sanitising).
@@ -33,7 +33,7 @@ None of them changes the data path's design.
 | Live, against Graylog 7.1.10 with Netty's paranoid leak detector | TLS 6/6; restarts lost input stop 1, Graylog restart 32, relay kill 24, named restart 0, all recovered by themselves; monitoring 9/9; quick throughput 1k/4k/8k q/s at 100.000 %; 0 leak reports, and every ERROR line came from a fault the tests injected |
 | **3 h soak at 5,000 q/s over TLS**, queue + retry, paranoid leak detector | **54,000,000 answered, 54,000,000 delivered, 0 lost**; 36/36 windows OK; 0 BIND drops, 0 decode failures |
 | Graylog log during the soak | 238 lines: 0 ERROR, 0 WARN, 0 leak reports |
-| Resources over 3 h (first vs last hour) | old gen after GC 203 → 186 MB, heap 885 → 737 MB, Graylog RSS 2.24 → 2.02 GB, threads 428 → 428, FDs 342 → 341: no growth |
+| Resources over 3 h (first vs last hour) | old gen after GC 203 -> 186 MB, heap 885 -> 737 MB, Graylog RSS 2.24 -> 2.02 GB, threads 428 -> 428, FDs 342 -> 341: no growth |
 | Journal during the soak | median 1 uncommitted message; peaks up to 13,648 (< 3 s of traffic) during index rotations, always drained |
 
 A CPU profile under 8,000 messages/s puts the plugin at 1.3 % of Graylog's CPU, so faster plugin code wouldn't
@@ -56,7 +56,7 @@ passes on 1.0.3:
 Operating conditions:
 1. **Size Graylog/OpenSearch for the peak rate.** The plugin isn't the bottleneck: it decodes ~240k frames/s per core,
    and BIND + relay export losslessly up to 30k q/s. On the lab's size, Graylog keeps up to ~10k q/s; beyond that its
-   journal grows, losslessly but with delay. A large resolver (e.g. ~10–20k q/s at peak) needs a bigger Graylog than
+   journal grows, losslessly but with delay. A large resolver (e.g. ~10-20k q/s at peak) needs a bigger Graylog than
    the lab, and ~200 bytes of storage per event.
 2. **Use the queue + retry settings.** Without them, a Graylog restart loses ~29k events at 2k q/s, as UDP syslog
    does, and silently.
@@ -74,10 +74,10 @@ Operating conditions:
 | Long fuzzing: 3M mutated real frames into the codec, random byte streams into the frame decoder | PASS |
 | Production export setup end to end: a query found in Graylog with parsed fields | PASS |
 | TLS: the 629-frame capture under 5 client configurations, counted with the input's own counter | valid client 629/629; plain TCP, no client cert, untrusted CA: 0; wrong server CA: refused by the client |
-| Restarts at 2,000 q/s, lost events counted exactly | input stopped 5 s: **56** · Graylog restart: **31** · relay killed: **23** · named restart: **0** · syslog/UDP on a Graylog restart, for comparison: **26,773**. Every case recovered by itself |
+| Restarts at 2,000 q/s, lost events counted exactly | input stopped 5 s: **56**; Graylog restart: **31**; relay killed: **23**; named restart: **0**; syslog/UDP on a Graylog restart, for comparison: **26,773**. Every case recovered by itself |
 | Monitoring: injected faults | 9/9 PASS: OK under load; WARNING for a corrupt frame header and for an undecodable frame; CRITICAL with the input stopped; OK after recovery; Graylog alert fired 136 s after dnstap stopped; webhook delivered |
 | Throughput, production setup, 1k / 4k / 8k q/s | 100.000 % delivered, 0 BIND drops |
-| Throughput, production setup, stepped to 30k q/s | 10k q/s with no loss and no backlog; 15–25k lossless, but Graylog's journal backs up; the export itself lossless to 30k |
+| Throughput, production setup, stepped to 30k q/s | 10k q/s with no loss and no backlog; 15-25k lossless, but Graylog's journal backs up; the export itself lossless to 30k |
 | Web UI | input form complete with defaults, input wizard, saved values, search; an input created with 1.0.2 kept working after the jar swap |
 | Soak, 1 h at 3,000 q/s over TLS | **10,800,000 answered, 10,800,000 delivered, 0 lost**, 0 BIND drops, 0 decode failures, 12/12 five-minute windows OK; resources stable |
 
@@ -90,14 +90,14 @@ Operating conditions:
    - With other syslog traffic flowing, as in production, it fired after 136 s.
 
    Hence `dnstap-health`, which has no such dependency, is the primary check.
-2. **Webhook notifications are blocked by Graylog's URL allowlist**, which 7.x enables by default ("URL … is not
+2. **Webhook notifications are blocked by Graylog's URL allowlist**, which 7.x enables by default ("URL ... is not
    allowlisted"). `create-graylog-alerts` adds the webhook to the allowlist.
 3. **Counters reset.** An input restart recreates its metrics at 0, and a named restart resets `DNSTAPdropped`.
    `dnstap-health` treats a lower value as a reset, so errors after it aren't missed.
 
 ## Expected behaviour worth knowing
 
-- **Event lag p95 ≈ 1 s at low rates.** named sends a partly filled buffer once per
+- **Event lag p95 ~ 1 s at low rates.** named sends a partly filled buffer once per
   `fstrm-set-output-flush-timeout` (1 s).
 - **After an outage, events arrive late with their original timestamps.** BIND's queue replays them, so a few
   messages "appear" inside an outage window afterwards.
@@ -115,12 +115,12 @@ counted exactly in OpenSearch.
 
 | Indicator | Behaviour | Verdict |
 |---|---|---|
-| Graylog old gen after GC | one step 126 → 220 MB in the first 7 min (the first G1 cycle), then **flat at 220 MB for 55 min** | stable |
+| Graylog old gen after GC | one step 126 -> 220 MB in the first 7 min (the first G1 cycle), then **flat at 220 MB for 55 min** | stable |
 | Threads | 450 | stable |
 | File descriptors | 341 | stable |
-| Graylog RSS | 2.5 → 2.1 GB | stable |
+| Graylog RSS | 2.5 -> 2.1 GB | stable |
 | Data Node RSS | ~2.2 GB | stable |
-| named RSS | 35 → 20 MB | stable |
+| named RSS | 35 -> 20 MB | stable |
 | Journal | 0 uncommitted | stable |
 
 An hour can't rule out a very slow leak, but there is no sign of one: no rising floor, and no thread or FD growth.

@@ -17,7 +17,7 @@ Besides Graylog's usual bind address, port, TLS, receive buffer, worker threads 
 
 | Setting | Default | |
 |---|---|---|
-| Maximum frame size | 256 KiB | clamped to 65,535 + 1,024 B … 16 MiB; a bigger frame is a framing error and closes the connection. A complete dnstap frame is at most ~130 KB; the limit also bounds the memory an incomplete frame can hold per connection |
+| Maximum frame size | 256 KiB | clamped to 65,535 + 1,024 B to 16 MiB; a bigger frame is a framing error and closes the connection. A complete dnstap frame is at most ~130 KB; the limit also bounds the memory an incomplete frame can hold per connection |
 | Include answers | on | the `answers` field of responses (capped at 8 KiB of text, each rdata at 256 characters) |
 | Skip message types | empty | e.g. `CR,AR`: dropped at the input, counted in the `skipped` metric |
 | TCP keepalive (Graylog's setting) | **on** for new inputs | lets the kernel close connections whose relay vanished without closing them (host down, network cut). Inputs created with 1.0.3 or older keep their stored value: enable it there |
@@ -44,20 +44,20 @@ An undecodable frame raises an `InputProcessingException`. Graylog counts it as 
 counts it in its `failures` metric. Non-message dnstap payloads are skipped and counted (`nonMessage`).
 
 ## Monitoring
-All metrics are under *System → Nodes → Metrics* and `GET /api/system/metrics/<name>`, with `I` = the input id.
+All metrics are under *System > Nodes > Metrics* and `GET /api/system/metrics/<name>`, with `I` = the input id.
 
 | Metric | Type | Meaning |
 |---|---|---|
 | `org.graylog.plugins.dnstap.DnstapInput.I.incomingMessages` | meter | frames received (Graylog's own); `m1_rate` = msg/s |
-| `….DnstapInput.I.open_connections` | gauge | connected relays; 0 = nothing is sending |
-| `….DnstapInput.I.fstrm.frames` | counter | data frames decoded |
-| `….DnstapInput.I.fstrm.control.ready` / `start` / `stop` | counter | handshakes: a growing `start` means senders reconnect |
-| `….DnstapInput.I.fstrm.errors.framing` | counter | corrupt streams; each one closes a connection |
-| `….DnstapInput.I.fstrm.frameSize` | histogram | bytes per frame (1 in 32 sampled) |
+| `....DnstapInput.I.open_connections` | gauge | connected relays; 0 = nothing is sending |
+| `....DnstapInput.I.fstrm.frames` | counter | data frames decoded |
+| `....DnstapInput.I.fstrm.control.ready` / `start` / `stop` | counter | handshakes: a growing `start` means senders reconnect |
+| `....DnstapInput.I.fstrm.errors.framing` | counter | corrupt streams; each one closes a connection |
+| `....DnstapInput.I.fstrm.frameSize` | histogram | bytes per frame (1 in 32 sampled) |
 | `org.graylog.plugins.dnstap.DnstapCodec.I.failures` | counter | undecodable frames |
-| `….DnstapCodec.I.eventLagMs` | histogram | Graylog processing time − DNS event time, ms (1 in 32 sampled); a rising p95 = backlog |
-| `….DnstapCodec.I.types.CQ` (`AQ`, `CR`, …) | meter | messages per dnstap type |
-| `….DnstapCodec.I.skipped`, `nonMessage` | meter | dropped by *Skip message types* / not a DNS message |
+| `....DnstapCodec.I.eventLagMs` | histogram | Graylog processing time - DNS event time, ms (1 in 32 sampled); a rising p95 = backlog |
+| `....DnstapCodec.I.types.CQ` (`AQ`, `CR`, ...) | meter | messages per dnstap type |
+| `....DnstapCodec.I.skipped`, `nonMessage` | meter | dropped by *Skip message types* / not a DNS message |
 
 Notes on these metrics:
 - A lag p95 of about **1 s at low rates is normal**: named sends a partly filled buffer once per
@@ -84,9 +84,9 @@ monitor/create-graylog-alerts --url https://graylog.example.org:9000 --token TOK
 - It creates the event definition *"dnstap: no messages for 5 min"* on the stream, checked every minute.
 - It adds an optional HTTP notification and puts the webhook on Graylog's URL allowlist, which 7.x enables by default.
 
-⚠️ **The Graylog alert needs other traffic on the cluster.** Graylog 7.1 evaluates an aggregation window only after
+**The Graylog alert needs other traffic on the cluster.** Graylog 7.1 evaluates an aggregation window only after
 a message received after the window start has been indexed somewhere. While every node is idle, it waits.
-- A Graylog that also receives other logs fires the alert 2–3 min after dnstap stops.
+- A Graylog that also receives other logs fires the alert 2-3 min after dnstap stops.
 - On a Graylog that receives **only** dnstap, it never fires.
 
 `dnstap-health` has no such dependency: use it as the primary check.
@@ -99,7 +99,7 @@ reached Graylog.
 |---|---|---|
 | Graylog input stopped 5 s | 9,593 lost | **56** |
 | Graylog restart (~15 s) | 28,767 lost | **31** |
-| (comparison) Graylog restart with syslog/UDP | 26,773 lost | – |
+| (comparison) Graylog restart with syslog/UDP | 26,773 lost | - |
 | Relay process killed | 64 | **23** |
 | named restart | 0 | 0 |
 
@@ -112,17 +112,17 @@ Every case recovered without intervention.
   - relay retry only: 26,657 lost, but *counted* by BIND
 - **Together they ride out a Graylog restart.**
   - socat's `retry=120,interval=1` keeps named's connection waiting.
-  - `fstrm-set-input-queue-size 16384` holds the frames meanwhile: per worker thread, so 12 threads ≈ 98 s at 2,000 q/s.
+  - `fstrm-set-input-queue-size 16384` holds the frames meanwhile: per worker thread, so 12 threads ~ 98 s at 2,000 q/s.
   - Beyond the queue, named drops frames and counts them; it never slows DNS.
 
 ## Performance and sizing
 Measured on a lab with 12 CPUs / 9 GB, Graylog 7.1.10 with a 2 GB heap, one Data Node and BIND 9.20:
 
-| | syslog → rsyslog → UDP | dnstap |
+| | syslog -> rsyslog -> UDP | dnstap |
 |---|---|---|
 | Sustained end to end (no loss, no backlog) | 10k q/s | 15k q/s plain TCP; 10k with TLS |
 | named CPU at 15k q/s | 1.38 cores + rsyslog 0.47 | 0.96 cores + socat ~0.01 |
-| DNS answers start failing | 15–20k q/s | 25–30k q/s |
+| DNS answers start failing | 15-20k q/s | 25-30k q/s |
 
 The plugin itself decodes ~240k frames/s per core, and BIND + relay export losslessly up to 30k q/s. **The limit is
 Graylog/OpenSearch**: size them for your peak query rate. Beyond their capacity the journal grows: no loss, but
@@ -242,7 +242,7 @@ Layout (`src/main/java/org/graylog/plugins/dnstap/`):
 | `FstrmTransport` | Graylog TCP transport, with TLS from Graylog |
 | `FstrmFrameDecoder` | Frame Streams framing and handshake |
 | `FstrmMetrics` | the input's metrics |
-| `DnstapCodec` | dnstap → Graylog message fields |
+| `DnstapCodec` | dnstap -> Graylog message fields |
 | `DnstapFrame`, `ProtoReader` | protobuf |
 | `DnsMessage` | DNS wire format |
 | `Text` | escaping of sender-chosen text in fields |

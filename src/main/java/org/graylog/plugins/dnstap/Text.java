@@ -34,7 +34,7 @@ final class Text {
         return sb.toString();
     }
 
-    /** One TXT character-string in presentation format: quotes and backslashes escaped too (RFC 1035 §5.1). */
+    /** One TXT character-string in presentation format: quotes and backslashes escaped too (RFC 1035 section 5.1). */
     static void appendQuoted(StringBuilder sb, String s) {
         sb.append('"');
         for (int i = 0; i < s.length(); i++) {
@@ -51,7 +51,7 @@ final class Text {
     }
 
     private static boolean needsEscape(char c) {
-        return c < 0x20 || (c >= 0x7F && c <= 0x9F) || c == ' ' || c == ' ';
+        return c < 0x20 || (c >= 0x7F && c <= 0x9F) || c == '\u2028' || c == '\u2029';
     }
 
     private static void appendDecimal(StringBuilder sb, char c) {

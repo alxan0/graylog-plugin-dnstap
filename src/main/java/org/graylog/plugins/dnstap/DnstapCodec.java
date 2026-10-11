@@ -303,7 +303,7 @@ public class DnstapCodec extends AbstractCodec {
     }
 
     private static String cap(String s) {
-        return s.length() > MAX_ANSWERS_TEXT ? s.substring(0, MAX_ANSWERS_TEXT) + "…" : s;
+        return s.length() > MAX_ANSWERS_TEXT ? s.substring(0, MAX_ANSWERS_TEXT) + "..." : s;
     }
 
     /** Wraps the wire-format query_zone name in a one-question DNS message, so DnsMessage can parse it. */

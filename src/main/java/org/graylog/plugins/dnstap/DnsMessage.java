@@ -260,7 +260,7 @@ final class DnsMessage {
         };
         pos = rdStart + rdlen;
         // capped: the joined answers go into a keyword field, and OpenSearch rejects terms over 32766 bytes
-        return typeName(type) + " " + (data.length() > MAX_RDATA_TEXT ? data.substring(0, MAX_RDATA_TEXT) + "…" : data);
+        return typeName(type) + " " + (data.length() > MAX_RDATA_TEXT ? data.substring(0, MAX_RDATA_TEXT) + "..." : data);
     }
 
     private String ip(int at, int len) {

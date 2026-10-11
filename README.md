@@ -25,7 +25,7 @@ named -> /run/named/dnstap.sock -> socat (TLS) -> Graylog Dnstap input :6000
 1. Get `graylog-plugin-dnstap-<version>.jar` from the [releases](../../releases), or build it (see below).
 2. Copy it into the plugin directory of every Graylog node (`/usr/share/graylog-server/plugin/` for package
    installs, `/usr/share/graylog/plugin/` in Docker) and restart Graylog. Keep only one version of the jar there.
-3. Create the input under System → Inputs → *Dnstap (Frame Streams/TCP)*, port 6000. For TLS, set the server
+3. Create the input under System > Inputs > *Dnstap (Frame Streams/TCP)*, port 6000. For TLS, set the server
    certificate and key, and set *TLS client authentication* to *required* with your CA as trusted certs.
    No CA at hand? [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) creates one, plus the server and client
    certificates.
@@ -75,6 +75,9 @@ This plugin is a rewrite of [graylog-plugin-dnstap](https://github.com/sega-yark
 Sergey I. Yarkin, which was written for Graylog 2.x and no longer loads on current versions (see the
 [Graylog community thread](https://community.graylog.org/t/dnstap-input-plugin/22770)). Thanks also to the
 [dnstap](https://dnstap.info/) project for the format and the Frame Streams protocol.
+
+The port to the Graylog 7.1 plugin API, and the testing behind it, was done with the help of Claude, Anthropic's AI
+assistant.
 
 It isn't affiliated with Graylog, Inc. or ISC.
 

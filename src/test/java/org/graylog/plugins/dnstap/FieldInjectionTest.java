@@ -25,7 +25,7 @@ class FieldInjectionTest {
     void controlCharactersAreEscapedAndUnicodeIsKept() {
         assertEquals("ns1\\010FAKE LINE", Text.escapeControls("ns1\nFAKE LINE"));
         assertEquals("a\\013b\\027[31m\\127\\133", Text.escapeControls("a\rb\u001b[31m\u007f\u0085"));
-        assertEquals("x\\u2028y", Text.escapeControls("x y"));
+        assertEquals("x\\u2028y", Text.escapeControls("x\u2028y"));
         final String plain = "BIND 9.20.29-1~deb13u1-Debian / ns-ț-名前";
         assertEquals(plain, Text.escapeControls(plain));
     }
