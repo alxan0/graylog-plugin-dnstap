@@ -1,4 +1,4 @@
-# graylog-plugin-dnstap 1.0.7: production readiness
+# graylog-plugin-dnstap 1.1.0: production readiness
 
 Tested on 2026-10-10/11 in a lab built like a production deployment:
 - Graylog 7.1.10 with one Data Node and a MongoDB cluster (Graylog heap 2 GB)
@@ -12,6 +12,40 @@ Every test used the **recommended setup** (see the README):
 
 The load came from `dnsperf` with uniquely named queries. Each query was counted exactly at every hop: dnsperf, BIND's
 counters, the input's counters, and an exact OpenSearch count by query name.
+
+## 1.1.0: field names and a 1-hour soak
+
+1.1.0 renames three fields, adds `dnstap: true` and reads `dnstap-fields.conf` (see the README). It was tested on
+Graylog 7.1.10 (512 MB heap) with BIND 9.20.29, the relay retry and a 16,384-frame queue, the "DNS dnstap" pipeline
+attached to the stream, and Netty's paranoid leak detector on.
+
+**1-hour soak:** 300 q/s of uniquely named queries (queries and responses, 600 messages/s) plus 30 syslog query lines/s
+through the syslog pipeline. The input was restarted every 10 minutes with a changing `dnstap-fields.conf`: a valid
+mapping, an invalid file, no file and a FIFO.
+
+| | Result |
+|---|---|
+| Queries delivered | 1,079,974 of 1,080,000; responses 1,079,950 of 1,080,000. The missing ones fall in the 7 input restarts |
+| Syslog lines delivered and enriched | 108,000 of 108,000 |
+| Codec failures, framing errors, processing errors | 0, 0, 0 |
+| Netty leak reports, Graylog ERROR lines | 0, 0 |
+| Input restarts | 7 of 7 RUNNING; each file case logged as intended, defaults used for the invalid file and the FIFO |
+| File descriptors, RSS | 260 to 265; 962 MB down to 889 MB |
+| Threads | grow by 6 over the first restarts as the worker loops start, then flat over 10 more restarts |
+
+**Heap after a full GC** (`jcmd GC.run`), taken after the soak and again after another 10 minutes at 300 q/s with 5
+more restarts: 141.8 MB, then 139.3 MB. The class histogram shows one instance of each plugin class (input, transport,
+frame decoder, metrics) after 22 restarts, so no old input survives.
+
+**Before the soak**, a review and a stress test of the new code:
+- about 90 malformed `dnstap-fields.conf` variants (binary, 100 MB, wrong encodings, device and FIFO symlinks, loops,
+  no permission, log-forging attempts): each one ignored and reported, the input always RUNNING
+- 10.2M messages decoded while the names were reloaded 676,000 times, and 12 input restarts under 3,000 q/s
+  (75,241 messages): no message with mixed names
+- two problems found and fixed before release: a FIFO as the file blocked the input's start, and names reserved by
+  OpenSearch (`_routing`, ...) or managed by Graylog (`streams`) were accepted
+- unit tests, the analysis profile, 3,000,000 fuzz iterations and the opt-in `LeakSoakTest` (8.8M messages, heap
+  flat) pass
 
 ## 1.0.7: leak test and fixes
 

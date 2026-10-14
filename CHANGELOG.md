@@ -1,5 +1,17 @@
 # Changelog
 
+**1.1.0** aligns field names with a BIND query log pipeline and makes them configurable:
+- `client_ip`, `qname` and `qtype` are now `dns_client_ip`, `dns_query_name` and `dns_query_type`.
+- Every message has `dnstap: true`, so pipeline rules can select dnstap messages.
+- Any field can be renamed with `dnstap-fields.conf` in the plugin directory, read when the input starts (in
+  Docker, when the container starts). A file with any error is ignored and reported in Graylog's log. To keep
+  the 1.0.x names:
+  ```
+  dns_client_ip = client_ip
+  dns_query_name = qname
+  dns_query_type = qtype
+  ```
+
 **1.0.7** fixes leaks found by a leak test with input stop/start cycles:
 - Graylog 7.1.10 never shuts down an input's worker thread pool, so every start of a TCP input leaves its worker
   threads (12 by default) and the old transport behind: about 0.7 MB of heap per restart, for every TCP input. The

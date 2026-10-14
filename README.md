@@ -56,6 +56,25 @@ Once messages arrive, turn off BIND's text query log (`rndc querylog off`), or e
 [`monitor/`](monitor) has a Nagios-style health check and a script that sets up a Graylog alert for when no dnstap
 arrives. Fields, settings, metrics and outage behaviour are covered in [docs/reference.md](docs/reference.md).
 
+## Usage
+
+Each dnstap event becomes a Graylog message with fields such as `dns_client_ip`, `dns_query_name`, `dns_query_type`,
+`rcode` and `answers` (full list in [docs/reference.md](docs/reference.md#fields)). Every message also has
+`dnstap: true`, so pipeline rules can select dnstap messages with `has_field("dnstap")`.
+
+To use other field names, create `dnstap-fields.conf` in the plugin directory, next to the jar, with one
+`default_name = new_name` per line. Then restart the input; in Docker, restart the container, because the image
+copies the plugin directory at start. With several Graylog nodes, put the file on each of them.
+
+```
+# dnstap-fields.conf
+dns_client_ip = client_ip
+dns_query_name = qname
+```
+
+Graylog's server log shows the names in use (`Field names from ...`). If any line is wrong, the whole file is
+ignored, the default names apply and the log says why.
+
 ## Build
 
 ```bash

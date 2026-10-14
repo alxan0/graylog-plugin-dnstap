@@ -42,6 +42,7 @@ public class DnstapInput extends MessageInput {
 
     @Override
     public void launch(InputBuffer buffer, InputFailureRecorder failureRecorder) throws MisfireException {
+        FieldNames.reload();
         DnstapCodec.inputStarted(getId());
         super.launch(buffer, failureRecorder);
     }

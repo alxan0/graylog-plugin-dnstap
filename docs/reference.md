@@ -29,16 +29,31 @@ Besides Graylog's usual bind address, port, TLS, receive buffer, worker threads 
 | `message` | `CQ 10.0.0.101#54344 -> www.example.org IN A` / `CR 10.0.0.101#54344 <- www.example.org IN A NOERROR [A 192.0.2.80]` | |
 | `source` | `ns1` | dnstap identity; else the sender address; or *Override source* |
 | `timestamp` | query (or response) time from dnstap, ms precision, UTC | |
+| `dnstap` | `true` | on every message, for pipeline rules |
 | `dnstap_type`, `dnstap_type_short` | `CLIENT_QUERY`, `CQ` | AQ AR CQ CR RQ RR FQ FR SQ SR TQ TR UQ UR |
 | `dnstap_version` | `BIND 9.20.29-1~deb13u1-Debian` | |
 | `socket_family`, `socket_protocol` | `INET`, `UDP` | |
 | `query_ip`, `query_port`, `response_ip`, `response_port` | | raw dnstap addresses |
-| `client_ip`, `client_port`, `server_ip` | | for AUTH_\*, CLIENT_\*, UPDATE_\* messages (the client side) |
-| `qname`, `qtype`, `qclass` | `www.example.org`, `A`, `IN` | first question, no trailing dot |
+| `dns_client_ip`, `client_port`, `server_ip` | | for AUTH_\*, CLIENT_\*, UPDATE_\* messages (the client side) |
+| `dns_query_name`, `dns_query_type`, `qclass` | `www.example.org`, `A`, `IN` | first question, no trailing dot |
 | `dns_id`, `dns_opcode`, `dns_flags`, `dns_size` | `QUERY`, `qr aa rd` | |
 | `rcode`, `answer_count`, `answers`, `latency_us` | `NOERROR`, `1`, `A 192.0.2.80` | responses only |
 | `query_zone` | | when BIND sets it |
 | `dnstap_event_time_suspect` | `true` | only when the dnstap time is more than 7 days from the receive time; `timestamp` is then the receive time |
+
+Every field except `message`, `source` and `timestamp` can be renamed with `dnstap-fields.conf` (see the
+[README](../README.md#usage)). The file is read when an input starts (in Docker: when the container starts, since the
+image copies the plugin directory then). The whole file is ignored, with a warning in Graylog's log for each
+problem, and the default names apply when:
+- a field is unknown or renamed twice
+- a new name isn't a valid Graylog field name, contains a dot, starts with `_`, is longer than 100 characters or is
+  reserved (`message`, `streams`, `gl2_*`, ...)
+- two fields would end up with the same name
+- the file isn't a regular file, is larger than 64 KiB, isn't UTF-8 or can't be read
+
+The names apply to every Dnstap input on the node, and to messages still waiting in Graylog's journal. A new name that
+the current index already holds with another type (for example a number field renamed onto a text field) makes
+messages fail to index until the index set rotates, so prefer names that aren't in use yet.
 
 An undecodable frame raises an `InputProcessingException`. Graylog counts it as a processing failure, and the plugin
 counts it in its `failures` metric. Non-message dnstap payloads are skipped and counted (`nonMessage`).
@@ -170,7 +185,7 @@ text-based outputs or log files.
   (authenticated) sender can make the server log noisy. Watch the `failures` metric; `dnstap-health` warns on it.
 
 ## Tests
-**In this repository** (`./build.sh`): 37 unit tests on the BIND capture, covering:
+**In this repository** (`./build.sh`): 53 unit tests on the BIND capture, covering:
 - frame decoding fed in random chunks
 - the full handshake
 - message-type counts equal to `dnstap-read`
@@ -187,6 +202,7 @@ text-based outputs or log files.
   and for 20,000 mutated streams, every buffer is released exactly once. That covers the inputs, Netty's cumulation
   buffers and the handshake frames. A leak, a double release or a use after release fails the test.
 - escaping of sender-chosen text (`FieldInjectionTest`)
+- the field name file: renames, ignored lines, defaults and the `dnstap` field (`FieldNamesTest`)
 
 The full suite also runs clean with Netty's leak detector at paranoid level and 3,000,000 fuzz iterations.
 
@@ -213,13 +229,16 @@ Their reports are in `target/spotbugsXml.xml` and `target/pmd.xml`.
 
 The first run on 1.0.3 reported 10 SpotBugs, 11 Error Prone/javac and 61 PMD findings. Version 1.0.4 fixes every real one: an
 ignored write future, sender data in log lines, unread fields, a duplicate branch, a lost exception cause, a deprecated
-API and style issues. That leaves 7 SpotBugs, 3 Error Prone and 5 PMD findings, each reviewed and kept on purpose:
+API and style issues. That leaves 7 SpotBugs, 3 Error Prone and 5 PMD findings, each reviewed and kept on purpose. 1.1.0 adds SpotBugs and PMD findings in `FieldNames` of the kinds in the table
+(the two `FieldNames` rows and `GuardLogStatement`):
 
 | Finding | Why it stays |
 |---|---|
 | SpotBugs `EI_EXPOSE_REP2`: storing the injected `MetricRegistry` | it's Graylog's shared registry; holding the reference is the point |
 | FindSecBugs `CRLF_INJECTION_LOGS` in `FstrmFrameDecoder` | the remaining logged values are the peer address, the plugin's own numeric messages, and content types already stripped of control characters (`printable()`), which the tool can't see |
-| PMD `GuardLogStatement` | SLF4J parameterized calls with cheap arguments; the one costly argument is guarded |
+| FindSecBugs `CRLF_INJECTION_LOGS` in `FieldNames` | the logged values are the plugin's own file path, validated field names and file text passed through `printable()` |
+| PMD `AvoidUsingVolatile` in `FieldNames` | the current field names are replaced on input start and read once per message; a volatile reference is the cheapest safe publication |
+| PMD `GuardLogStatement` | SLF4J parameterized calls with cheap arguments; the one costly argument on the frame path is guarded, and `FieldNames` logs only while it loads its file |
 | Error Prone `NonApiType` / PMD `LooseCoupling` (`LinkedHashMap`) | the type is fixed by the Graylog method being overridden |
 | Error Prone `NonCanonicalType` (`AbstractCodec.Factory`) | the form Graylog's own codecs use |
 | Error Prone `FutureReturnValueIgnored` in `FuzzTest` | closing a test channel during teardown; nothing to check |
@@ -247,6 +266,7 @@ Layout (`src/main/java/org/graylog/plugins/dnstap/`):
 | `FstrmFrameDecoder` | Frame Streams framing and handshake |
 | `FstrmMetrics` | the input's metrics |
 | `DnstapCodec` | dnstap -> Graylog message fields |
+| `FieldNames` | field names, and `dnstap-fields.conf` |
 | `DnstapFrame`, `ProtoReader` | protobuf |
 | `DnsMessage` | DNS wire format |
 | `Text` | escaping of sender-chosen text in fields |

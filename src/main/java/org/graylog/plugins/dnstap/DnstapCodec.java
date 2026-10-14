@@ -40,12 +40,14 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.stream.Collectors;
 
 import static com.codahale.metrics.MetricRegistry.name;
+import static org.graylog.plugins.dnstap.FieldNames.Field.*;
 
 /**
  * Turns one dnstap protobuf payload (one Frame Streams data frame) into one Graylog message.
  * <p>
- * Field names line up with what a pipeline extracts from BIND's text query log (client_ip, client_port,
- * qname, qclass, qtype, server_ip), so the two transports can be compared and searched the same way.
+ * Field names come from {@link FieldNames}. The defaults line up with what a pipeline extracts from BIND's text
+ * query log (dns_client_ip, dns_query_name, dns_query_type), so the two transports can be searched the same way,
+ * and {@code dnstap: true} marks the message for pipeline rules.
  */
 @Codec(name = "dnstap", displayName = "Dnstap")
 public class DnstapCodec extends AbstractCodec {
@@ -213,51 +215,53 @@ public class DnstapCodec extends AbstractCodec {
             }
         }
 
+        final FieldNames n = FieldNames.current();
         final Message m = messageFactory.createMessage(text.toString(), source, ts);
-        m.addField("dnstap_type", DnstapFrame.typeName(f.messageType));
-        m.addField("dnstap_type_short", typeShort);
-        addIfPresent(m, "dnstap_version", f.version);
-        m.addField("socket_family", DnstapFrame.familyName(f.socketFamily));
-        m.addField("socket_protocol", DnstapFrame.protocolName(f.socketProtocol));
+        m.addField(n.get(DNSTAP), true);
+        m.addField(n.get(DNSTAP_TYPE), DnstapFrame.typeName(f.messageType));
+        m.addField(n.get(DNSTAP_TYPE_SHORT), typeShort);
+        addIfPresent(m, n.get(DNSTAP_VERSION), f.version);
+        m.addField(n.get(SOCKET_FAMILY), DnstapFrame.familyName(f.socketFamily));
+        m.addField(n.get(SOCKET_PROTOCOL), DnstapFrame.protocolName(f.socketProtocol));
         if (suspect != null) {
-            m.addField("dnstap_event_time_suspect", suspect.toString());
+            m.addField(n.get(DNSTAP_EVENT_TIME_SUSPECT), suspect.toString());
         }
-        addAddress(m, "query_ip", "query_port", queryIp, f.queryPort);
-        addAddress(m, "response_ip", "response_port", responseIp, f.responsePort);
+        addAddress(m, n.get(QUERY_IP), n.get(QUERY_PORT), queryIp, f.queryPort);
+        addAddress(m, n.get(RESPONSE_IP), n.get(RESPONSE_PORT), responseIp, f.responsePort);
         // For client- and auth-side events the query address is the DNS client and the response address is this
         // server: name them like the fields parsed from BIND's text query log.
         if (f.isClientSide()) {
-            addAddress(m, "client_ip", "client_port", queryIp, f.queryPort);
-            addIfPresent(m, "server_ip", responseIp);
+            addAddress(m, n.get(CLIENT_IP), n.get(CLIENT_PORT), queryIp, f.queryPort);
+            addIfPresent(m, n.get(SERVER_IP), responseIp);
         }
         if (f.queryZone != null) {
             try {
-                m.addField("query_zone", DnsMessage.parse(zoneAsMessage(f.queryZone), 0, 12 + f.queryZone.length + 4, false).qname);
+                m.addField(n.get(QUERY_ZONE), DnsMessage.parse(zoneAsMessage(f.queryZone), 0, 12 + f.queryZone.length + 4, false).qname);
             } catch (MalformedDnstapException ignored) {
                 // optional field: a bad zone name only drops query_zone
             }
         }
         if (dns != null) {
-            m.addField("dns_id", dns.id);
-            m.addField("dns_opcode", DnsMessage.opcodeName(dns.opcode()));
-            m.addField("dns_flags", dns.flagString());
+            m.addField(n.get(DNS_ID), dns.id);
+            m.addField(n.get(DNS_OPCODE), DnsMessage.opcodeName(dns.opcode()));
+            m.addField(n.get(DNS_FLAGS), dns.flagString());
             if (dns.qname != null) {
-                m.addField("qname", dns.qname);
-                m.addField("qtype", DnsMessage.typeName(dns.qtype));
-                m.addField("qclass", DnsMessage.className(dns.qclass));
+                m.addField(n.get(QNAME), dns.qname);
+                m.addField(n.get(QTYPE), DnsMessage.typeName(dns.qtype));
+                m.addField(n.get(QCLASS), DnsMessage.className(dns.qclass));
             }
-            m.addField("dns_size", parsedResponse ? f.responseMessageLength : f.queryMessageLength);
+            m.addField(n.get(DNS_SIZE), parsedResponse ? f.responseMessageLength : f.queryMessageLength);
             if (parsedResponse) {
-                m.addField("rcode", DnsMessage.rcodeName(dns.rcode()));
-                m.addField("answer_count", dns.anCount);
-                addIfPresent(m, "answers", answers);
+                m.addField(n.get(RCODE), DnsMessage.rcodeName(dns.rcode()));
+                m.addField(n.get(ANSWER_COUNT), dns.anCount);
+                addIfPresent(m, n.get(ANSWERS), answers);
             }
         }
         if (response && f.queryTimeSec >= 0 && f.responseTimeSec >= 0) {
             final long us = (f.responseTimeSec - f.queryTimeSec) * 1_000_000L
                     + ((f.responseTimeNsec & 0xFFFFFFFFL) - (f.queryTimeNsec & 0xFFFFFFFFL)) / 1_000L;
             if (us >= 0) {
-                m.addField("latency_us", us);
+                m.addField(n.get(LATENCY_US), us);
             }
         }
         return m;

@@ -68,7 +68,7 @@ class LongRunningSafetyTest {
         final Message m = codec(new MetricRegistry()).decodeSafe(new RawMessage(FuzzTestAccess.dnstap(6, 14, HexFormat.of().parseHex(dns)),
                 new InetSocketAddress("10.0.0.1", 1))).orElseThrow();
         assertEquals("qr aa rd ra", m.getField("dns_flags"));
-        assertEquals("a\\.b.\\007", m.getField("qname"));
+        assertEquals("a\\.b.\\007", m.getField("dns_query_name"));
     }
 
     private static DnstapCodec codec(MetricRegistry r) {
