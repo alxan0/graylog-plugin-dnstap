@@ -90,7 +90,7 @@ class AdversarialCostTest {
         final byte[] frame = FuzzTestAccess.dnstap(6, 14, manyQuestions(true));
         assertCheap("65535 questions + answer", frame);
         final String answers = (String) new DnstapCodec(new Configuration(Map.of()), TestMessages.factory(), new MetricRegistry())
-                .decodeSafe(new RawMessage(frame, new InetSocketAddress("10.0.0.1", 1))).orElseThrow().getField("answers");
+                .decodeSafe(new RawMessage(frame, new InetSocketAddress("10.0.0.1", 1))).orElseThrow().getField("dns_answers");
         assertEquals("A 192.0.2.1", answers);
     }
 

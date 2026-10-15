@@ -59,7 +59,7 @@ arrives. Fields, settings, metrics and outage behaviour are covered in [docs/ref
 ## Usage
 
 Each dnstap event becomes a Graylog message with fields such as `dns_client_ip`, `dns_query_name`, `dns_query_type`,
-`rcode`, `answers` and, for queries, their EDNS data (`dns_edns`, `dns_do_bit`, ...). The full list is in
+`dns_rcode`, `dns_answers` and, for queries, their EDNS data (`dns_edns`, `dns_do_bit`, ...). The full list is in
 [docs/reference.md](docs/reference.md#fields). Every message also has `dnstap: true`, so pipeline rules can select
 dnstap messages with `has_field("dnstap")`.
 
@@ -85,6 +85,7 @@ ignored, the default names apply and the log says why.
 It needs only Docker. The script builds against the `graylog.jar` from the `graylog/graylog:7.1.10` image, runs the
 tests, and writes the jar to `dist/`. Use `GRAYLOG_VERSION=7.1.x ./build.sh` to build against another 7.1 release,
 and `./build.sh analyze` to also run Error Prone, SpotBugs and PMD.
+How to test a change or a release is described in [docs/testing.md](docs/testing.md).
 
 Test results, including a 3-hour soak test, are in [READINESS.md](READINESS.md). Version history is in
 [CHANGELOG.md](CHANGELOG.md).

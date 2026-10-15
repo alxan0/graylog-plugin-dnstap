@@ -50,7 +50,7 @@ class FieldInjectionTest {
         final String dns = "abcd81800001000100000000" + "0377777700" + "00100001"
                 + "c00c" + "0010" + "0001" + "00000001" + String.format("%04x", rdata.length() / 2) + rdata;
         final Message m = decode(FuzzTestAccess.dnstap(6, 14, HexFormat.of().parseHex(dns)));
-        assertEquals("TXT \"a\\010b\\\"c\\\\\"", m.getField("answers"));
+        assertEquals("TXT \"a\\010b\\\"c\\\\\"", m.getField("dns_answers"));
         assertFalse(m.getMessage().contains("\n"), "no line break in the message text");
     }
 

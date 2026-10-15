@@ -408,7 +408,7 @@ public class DnstapCodec extends AbstractCodec {
                 }
             });
             cr.addField(new BooleanField(CK_INCLUDE_ANSWERS, "Include answers", true,
-                    "For responses, add the answer records (e.g. \"A 192.0.2.1\") to the message and the 'answers' field."));
+                    "For responses, add the answer records (e.g. \"A 192.0.2.1\") to the message and the 'dns_answers' field."));
             cr.addField(new TextField(CK_SKIP_TYPES, "Skip message types", "",
                     "Comma-separated dnstap message types to drop at the input, as short codes (CQ, CR, AQ, AR, RQ, RR, FQ, FR, UQ, UR) "
                             + "or full names (CLIENT_RESPONSE). Empty = keep all.",

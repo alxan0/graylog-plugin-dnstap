@@ -71,16 +71,16 @@ class HardeningTest {
         final String badMx = "c00c" + "000f" + "0001" + "00000e10" + "0001" + "00";     // MX rdata of 1 byte
         final Message m = decode(response(2, a + badMx));
         assertEquals("www.example.com", m.getField("dns_query_name"));
-        assertEquals("NOERROR", m.getField("rcode"));
-        assertEquals("A 192.0.2.1", m.getField("answers"));
-        assertEquals(2, ((Number) m.getField("answer_count")).intValue());   // the header's ancount, not 1
+        assertEquals("NOERROR", m.getField("dns_rcode"));
+        assertEquals("A 192.0.2.1", m.getField("dns_answers"));
+        assertEquals(2, ((Number) m.getField("dns_answer_count")).intValue());   // the header's ancount, not 1
     }
 
     @Test
     void answerCountBeyondTheRecordsKeepsTheMessage() {
         final String a = "c00c" + "0001" + "0001" + "00000e10" + "0004" + "c0000201";
         final Message m = decode(response(5, a));
-        assertEquals("A 192.0.2.1", m.getField("answers"));
+        assertEquals("A 192.0.2.1", m.getField("dns_answers"));
     }
 
     @Test
@@ -96,7 +96,7 @@ class HardeningTest {
         rdata.writeBytes(second);
         final String txt = "c00c" + "0010" + "0001" + "00000e10" + String.format("%04x", rdata.size())
                 + HexFormat.of().formatHex(rdata.toByteArray());
-        final String answers = (String) decode(response(1, txt)).getField("answers");
+        final String answers = (String) decode(response(1, txt)).getField("dns_answers");
         assertTrue(answers.endsWith("..."), answers);
         assertNoLoneSurrogate(answers);
     }

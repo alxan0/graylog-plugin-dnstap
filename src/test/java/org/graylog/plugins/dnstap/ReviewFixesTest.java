@@ -59,7 +59,7 @@ class ReviewFixesTest {
                 + "c00c" + "0010" + "0001" + "00000001" + String.format("%04x", rdlen) + rdata;
         final Message m = codec().decodeSafe(new RawMessage(dnstapResponse(HexFormat.of().parseHex(dns)),
                 new InetSocketAddress("10.0.0.1", 1))).orElseThrow();
-        final String answers = (String) m.getField("answers");
+        final String answers = (String) m.getField("dns_answers");
         // + 3: the "..." appended when the text is cut
         assertTrue(answers.length() <= DnstapCodec.MAX_ANSWERS_TEXT + 3, "answers capped: " + answers.length());
         assertTrue(answers.getBytes(StandardCharsets.UTF_8).length < 32766, "fits an OpenSearch keyword");
@@ -71,14 +71,14 @@ class ReviewFixesTest {
         final String dns = "abcd01000001000000000000" + "0377777700" + "00010001";
         final Message m = codec().decodeSafe(new RawMessage(FuzzTestAccess.dnstap(6, 10, HexFormat.of().parseHex(dns)),
                 new InetSocketAddress("10.0.0.1", 1))).orElseThrow();
-        assertNull(m.getField("rcode"), "no rcode invented from the query");
+        assertNull(m.getField("dns_rcode"), "no rcode invented from the query");
         assertEquals(dns.length() / 2, ((Number) m.getField("dns_size")).intValue());
     }
 
     @Test
     void missingPortsAreNotWrittenAsMinusOne() throws Exception {
         final Message m = codec().decodeSafe(new RawMessage(Fixture.frames().get(10), new InetSocketAddress("10.0.0.1", 1))).orElseThrow();
-        for (String f : new String[]{"query_port", "response_port", "client_port"}) {
+        for (String f : new String[]{"dns_query_port", "dns_response_port", "dns_client_port"}) {
             final Object v = m.getField(f);
             assertTrue(v == null || ((Number) v).intValue() >= 0, f + "=" + v);
         }

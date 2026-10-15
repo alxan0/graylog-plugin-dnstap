@@ -18,7 +18,7 @@ Besides Graylog's usual bind address, port, TLS, receive buffer, worker threads 
 | Setting | Default | Notes |
 |---|---|---|
 | Maximum frame size | 256 KiB | clamped to 65,535 + 1,024 B to 16 MiB; a bigger frame is a framing error and closes the connection. A complete dnstap frame is at most ~130 KB; the limit also bounds the memory an incomplete frame can hold per connection |
-| Include answers | on | the `answers` field of responses (capped at 8 KiB of text, each rdata at 256 characters) |
+| Include answers | on | the `dns_answers` field of responses (capped at 8 KiB of text, each rdata at 256 characters) |
 | Skip message types | empty | e.g. `CR,AR`: dropped at the input, counted in the `skipped` metric |
 | TCP keepalive (Graylog's setting) | **on** for new inputs | lets the kernel close connections whose relay vanished without closing them (host down, network cut). Inputs created with 1.0.3 or older keep their stored value: enable it there |
 
@@ -32,14 +32,14 @@ Besides Graylog's usual bind address, port, TLS, receive buffer, worker threads 
 | `dnstap` | `true` | on every message, for pipeline rules |
 | `dnstap_type`, `dnstap_type_short` | `CLIENT_QUERY`, `CQ` | AQ AR CQ CR RQ RR FQ FR SQ SR TQ TR UQ UR |
 | `dnstap_version` | `BIND 9.20.29-1~deb13u1-Debian` | |
-| `socket_family`, `socket_protocol` | `INET`, `UDP` | |
-| `query_ip`, `query_port`, `response_ip`, `response_port` | | raw dnstap addresses |
-| `dns_client_ip`, `client_port`, `server_ip` | | for AUTH_\*, CLIENT_\*, UPDATE_\* messages (the client side) |
-| `dns_query_name`, `dns_query_type`, `qclass` | `www.example.org`, `A`, `IN` | first question, no trailing dot |
+| `dns_socket_family`, `dns_socket_protocol` | `INET`, `UDP` | |
+| `dns_query_ip`, `dns_query_port`, `dns_response_ip`, `dns_response_port` | | raw dnstap addresses |
+| `dns_client_ip`, `dns_client_port`, `dns_server_ip` | | for AUTH_\*, CLIENT_\*, UPDATE_\* messages (the client side) |
+| `dns_query_name`, `dns_query_type`, `dns_query_class` | `www.example.org`, `A`, `IN` | first question, no trailing dot |
 | `dns_id`, `dns_opcode`, `dns_flags`, `dns_size` | `QUERY`, `qr aa rd` | |
 | `dns_edns`, `dns_edns_version`, `dns_do_bit`, `dns_ecs` | `true`, `0` | queries only: the query has an EDNS OPT record (RFC 6891), its version (only with EDNS), the DO bit, an EDNS Client Subnet option (RFC 7871) |
-| `rcode`, `answer_count`, `answers`, `latency_us` | `NOERROR`, `1`, `A 192.0.2.80` | responses only |
-| `query_zone` | | when BIND sets it |
+| `dns_rcode`, `dns_answer_count`, `dns_answers`, `dns_latency_us` | `NOERROR`, `1`, `A 192.0.2.80` | responses only |
+| `dns_query_zone` | | when BIND sets it |
 | `dnstap_event_time_suspect` | `2019-03-01T10:00:00.000Z` | the dnstap time, only when the dnstap time is more than 7 days from the receive time; `timestamp` is then the receive time |
 
 Every field except `message`, `source` and `timestamp` can be renamed with `dnstap-fields.conf` (see the
@@ -194,7 +194,7 @@ text-based outputs or log files.
   port can make the server log noisy. Watch the `failures` metric; `dnstap-health` warns on it.
 
 ## Tests
-**In this repository** (`./build.sh`): 69 unit tests on the BIND capture (two of them opt-in: a throughput benchmark and a
+**In this repository** (`./build.sh`): 70 unit tests on the BIND capture (two of them opt-in: a throughput benchmark and a
 leak soak), covering:
 - frame decoding fed in random chunks
 - the full handshake
@@ -232,7 +232,8 @@ isn't part of this repository):
 - the EDNS fields compared with BIND's own query log
 - a security review with live attacks on the input
 
-Results and findings are in [READINESS.md](../READINESS.md).
+Results and findings are in [READINESS.md](../READINESS.md). The procedure for testing a change or a release is in
+[testing.md](testing.md).
 
 ## Static analysis
 `./build.sh analyze` runs three tools on top of the normal build and tests. They report findings without failing the

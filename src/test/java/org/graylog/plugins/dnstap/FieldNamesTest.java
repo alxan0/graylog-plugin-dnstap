@@ -27,6 +27,7 @@ import static org.graylog.plugins.dnstap.FieldNames.Field.DNSTAP_TYPE_SHORT;
 import static org.graylog.plugins.dnstap.FieldNames.Field.QCLASS;
 import static org.graylog.plugins.dnstap.FieldNames.Field.QNAME;
 import static org.graylog.plugins.dnstap.FieldNames.Field.QTYPE;
+import static org.graylog.plugins.dnstap.FieldNames.Field.QUERY_IP;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -66,6 +67,7 @@ class FieldNamesTest {
         for (FieldNames.Field f : FieldNames.Field.values()) {
             assertTrue(seen.add(n.get(f)), "duplicate default name " + n.get(f));
             assertTrue(Message.validKey(n.get(f)) && !Message.RESERVED_FIELDS.contains(n.get(f)), n.get(f));
+            assertTrue(n.get(f).startsWith("dns_") || n.get(f).startsWith("dnstap"), "naming scheme: " + n.get(f));
         }
     }
 
@@ -110,7 +112,7 @@ class FieldNamesTest {
                 "dns_query_type =",
                 "= qtype",
                 "dns_query_type = q\u0007type",
-                "qclass = dns_query_name",                    // two fields named dns_query_name
+                "dns_query_class = dns_query_name",           // two fields named dns_query_name
                 "dns_query_type = qtype\ndns_query_type = qt",  // renamed twice
         }) {
             assertSame(FieldNames.defaults(), load("dns_client_ip = client_ip\n" + bad + "\n"), bad);
@@ -118,8 +120,31 @@ class FieldNamesTest {
     }
 
     @Test
+    void changelogLinesRestoreThe120Names() throws Exception {
+        final FieldNames n = load("""
+                dns_socket_family = socket_family
+                dns_socket_protocol = socket_protocol
+                dns_query_ip = query_ip
+                dns_query_port = query_port
+                dns_response_ip = response_ip
+                dns_response_port = response_port
+                dns_client_port = client_port
+                dns_server_ip = server_ip
+                dns_query_zone = query_zone
+                dns_query_class = qclass
+                dns_rcode = rcode
+                dns_answer_count = answer_count
+                dns_answers = answers
+                dns_latency_us = latency_us
+                """);
+        assertEquals("qclass", n.get(QCLASS));
+        assertEquals("query_ip", n.get(QUERY_IP));
+        assertEquals("dns_client_ip", n.get(CLIENT_IP));
+    }
+
+    @Test
     void namesAreCheckedAfterAllLinesSoOrderDoesNotMatter() throws Exception {
-        final FieldNames reused = load("qclass = dns_query_name\ndns_query_name = query\n");
+        final FieldNames reused = load("dns_query_class = dns_query_name\ndns_query_name = query\n");
         assertEquals("query", reused.get(QNAME));
         assertEquals("dns_query_name", reused.get(QCLASS));
         final FieldNames swapped = load("dns_query_name = dns_query_type\ndns_query_type = dns_query_name\n");

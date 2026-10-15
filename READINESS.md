@@ -1,4 +1,4 @@
-# graylog-plugin-dnstap 1.2.0: production readiness
+# graylog-plugin-dnstap 1.3.0: production readiness
 
 This report collects the lab tests behind each release, newest first. Settings, fields and metrics are described in
 [docs/reference.md](docs/reference.md).
@@ -68,6 +68,14 @@ Expected behaviour worth knowing:
   messages appear inside an outage window afterwards.
 - **`dnstap-health`'s 1-minute rate is an EWMA.** It needs about a minute after a start or a recovery to reach the
   real rate, so keep `--min-rate` well below normal traffic.
+
+## 1.3.0
+
+1.3.0 only renames fields: every field the plugin extracts starts with `dns_` (see the CHANGELOG for the list and the
+lines that keep the 1.2.0 names). The decoding code is unchanged. Checks on Graylog 7.1.10 with the 1.3.0 jar:
+- the unit tests pass (68 run, 2 opt-in), including one that loads the CHANGELOG's compatibility lines
+- the query log comparison: 54 of 56 queries identical on all 22 fields, as with 1.2.0
+- the dnstap pipeline (rules for 1.3.0 field names): 44 edge cases through Graylog's pipeline simulator pass
 
 ## 1.2.0
 

@@ -49,12 +49,12 @@ class DnstapCodecTest {
                 .filter(x -> "CQ".equals(x.getField("dnstap_type_short"))).findFirst().orElseThrow();
         assertEquals("ns1", m.getSource());
         assertEquals("127.0.0.1", m.getField("dns_client_ip"));
-        assertEquals(45320, ((Number) m.getField("client_port")).intValue());
-        assertEquals("127.0.0.1", m.getField("server_ip"));
-        assertEquals("UDP", m.getField("socket_protocol"));
+        assertEquals(45320, ((Number) m.getField("dns_client_port")).intValue());
+        assertEquals("127.0.0.1", m.getField("dns_server_ip"));
+        assertEquals("UDP", m.getField("dns_socket_protocol"));
         assertEquals(53, ((Number) m.getField("dns_size")).intValue());
         assertEquals("ns1.lab.test", m.getField("dns_query_name"));
-        assertEquals("IN", m.getField("qclass"));
+        assertEquals("IN", m.getField("dns_query_class"));
         assertEquals("A", m.getField("dns_query_type"));
         assertEquals("BIND 9.20.29-1~deb13u1-Debian", m.getField("dnstap_version"));
         assertEquals("CQ 127.0.0.1#45320 -> ns1.lab.test IN A", m.getMessage());
@@ -66,12 +66,12 @@ class DnstapCodecTest {
         final DnstapCodec c = codec(Map.of());
         final List<Message> crs = Fixture.frames().stream().map(f -> decode(c, f).orElseThrow())
                 .filter(x -> "CR".equals(x.getField("dnstap_type_short"))).toList();
-        assertTrue(crs.stream().anyMatch(m -> "NXDOMAIN".equals(m.getField("rcode"))), "NXDOMAIN responses (nx action)");
-        assertTrue(crs.stream().anyMatch(m -> "REFUSED".equals(m.getField("rcode"))), "REFUSED responses (client2)");
+        assertTrue(crs.stream().anyMatch(m -> "NXDOMAIN".equals(m.getField("dns_rcode"))), "NXDOMAIN responses (nx action)");
+        assertTrue(crs.stream().anyMatch(m -> "REFUSED".equals(m.getField("dns_rcode"))), "REFUSED responses (client2)");
         final Message www = crs.stream().filter(m -> "www.lab.test".equals(m.getField("dns_query_name")) && "A".equals(m.getField("dns_query_type"))
-                && "NOERROR".equals(m.getField("rcode"))).findFirst().orElseThrow();
-        assertTrue(((String) www.getField("answers")).contains("A 10.251."), www.getMessage());
-        assertTrue(www.getFields().containsKey("latency_us"));
+                && "NOERROR".equals(m.getField("dns_rcode"))).findFirst().orElseThrow();
+        assertTrue(((String) www.getField("dns_answers")).contains("A 10.251."), www.getMessage());
+        assertTrue(www.getFields().containsKey("dns_latency_us"));
     }
 
     @Test

@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.3.0
+
+Every field the plugin extracts now starts with `dns_`, apart from `dnstap` and the `dnstap_*` fields.
+
+- Renamed: `socket_family`, `socket_protocol`, `query_ip`, `query_port`, `response_ip`, `response_port`,
+  `client_port`, `server_ip`, `query_zone`, `rcode`, `answer_count`, `answers` and `latency_us` get the `dns_`
+  prefix; `qclass` becomes `dns_query_class`, like `dns_query_name` and `dns_query_type`.
+- An existing `dnstap-fields.conf` must name fields by their 1.3.0 names on the left (`dns_query_class = ...`, not
+  `qclass = ...`). An old name is an unknown field, and a file with any problem is ignored as a whole.
+- To keep the 1.2.0 names, put these lines in `dnstap-fields.conf`:
+  ```
+  dns_socket_family = socket_family
+  dns_socket_protocol = socket_protocol
+  dns_query_ip = query_ip
+  dns_query_port = query_port
+  dns_response_ip = response_ip
+  dns_response_port = response_port
+  dns_client_port = client_port
+  dns_server_ip = server_ip
+  dns_query_zone = query_zone
+  dns_query_class = qclass
+  dns_rcode = rcode
+  dns_answer_count = answer_count
+  dns_answers = answers
+  dns_latency_us = latency_us
+  ```
+
 ## 1.2.0
 
 Adds the EDNS data of queries and fixes the problems found by a security review.
