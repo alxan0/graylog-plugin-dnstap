@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
  * </pre>
  */
 final class DnstapFrame {
+    private static final int MAX_TEXT_BYTES = 255;
     static final int DNSTAP_TYPE_MESSAGE = 1;
     static final int AUTH_QUERY = 1;
     static final int AUTH_RESPONSE = 2;
@@ -121,9 +122,11 @@ final class DnstapFrame {
         };
     }
 
-    // identity and version are chosen by the sender and end up in fields (identity becomes the message source)
+    // identity and version are chosen by the sender and end up in fields (identity becomes the message source).
+    // They are a host name and a software version: capped so a sender can't push a keyword field past OpenSearch's
+    // 32766-byte term limit.
     private static String utf8(byte[] b) {
-        return Text.escapeControls(new String(b, StandardCharsets.UTF_8));
+        return Text.escapeControls(new String(b, 0, Math.min(b.length, MAX_TEXT_BYTES), StandardCharsets.UTF_8));
     }
 
     // names as in dnstap.proto; short codes as printed by dnstap-read

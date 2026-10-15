@@ -151,7 +151,7 @@ public class DnstapCodec extends AbstractCodec {
             if (parsedResponse) {
                 dns = DnsMessage.parse(f.buf, f.responseMessageOffset, f.responseMessageLength, includeAnswers);
             } else if (f.queryMessageOffset >= 0) {
-                dns = DnsMessage.parse(f.buf, f.queryMessageOffset, f.queryMessageLength, false);
+                dns = DnsMessage.parse(f.buf, f.queryMessageOffset, f.queryMessageLength, false, true);
             } else {
                 dns = null;
             }
@@ -255,6 +255,14 @@ public class DnstapCodec extends AbstractCodec {
                 m.addField(n.get(RCODE), DnsMessage.rcodeName(dns.rcode()));
                 m.addField(n.get(ANSWER_COUNT), dns.anCount);
                 addIfPresent(m, n.get(ANSWERS), answers);
+            } else {
+                // the query's EDNS (RFC 6891): OPT record, its version, the DO bit and a client subnet option (RFC 7871)
+                m.addField(n.get(EDNS), dns.ednsVersion >= 0);
+                if (dns.ednsVersion >= 0) {
+                    m.addField(n.get(EDNS_VERSION), dns.ednsVersion);
+                }
+                m.addField(n.get(DO_BIT), dns.dnssecOk);
+                m.addField(n.get(ECS), dns.clientSubnet);
             }
         }
         if (response && f.queryTimeSec >= 0 && f.responseTimeSec >= 0) {
@@ -335,7 +343,7 @@ public class DnstapCodec extends AbstractCodec {
     }
 
     private static String cap(String s) {
-        return s.length() > MAX_ANSWERS_TEXT ? s.substring(0, MAX_ANSWERS_TEXT) + "..." : s;
+        return s.length() > MAX_ANSWERS_TEXT ? Text.cut(s, MAX_ANSWERS_TEXT) + "..." : s;
     }
 
     /** Wraps the wire-format query_zone name in a one-question DNS message, so DnsMessage can parse it. */

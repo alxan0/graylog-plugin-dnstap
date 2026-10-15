@@ -27,7 +27,7 @@ import java.util.List;
  * Bidirectional streams (BIND, Unbound, dnstap tools via a socket): READY -> we answer ACCEPT -> START, data...,
  * STOP -> we answer FINISH and close. Unidirectional streams (a dnstap file piped in): START, data..., STOP.
  * Each data frame (one dnstap protobuf) is passed on as its own ByteBuf, which Graylog turns into one RawMessage.
- * A framing error or a READY without the dnstap content type closes the connection.
+ * A framing error, a READY without the dnstap content type or a second READY closes the connection.
  */
 public class FstrmFrameDecoder extends ByteToMessageDecoder {
     private static final Logger LOG = LoggerFactory.getLogger(FstrmFrameDecoder.class);
@@ -134,6 +134,11 @@ public class FstrmFrameDecoder extends ByteToMessageDecoder {
         final int type = control.readInt();
         switch (type) {
             case CONTROL_READY -> {
+                // one handshake per connection: answering every READY would let a sender that never reads queue
+                // ACCEPT frames without limit
+                if (bidirectional) {
+                    throw new CorruptedFrameException("second Frame Streams READY");
+                }
                 metrics.ready.inc();
                 final List<String> offered = contentTypes(control);
                 if (!offered.isEmpty() && !offered.contains(DNSTAP_CONTENT_TYPE)) {

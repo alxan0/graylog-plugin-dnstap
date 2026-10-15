@@ -54,6 +54,24 @@ class FstrmFrameDecoderTest {
     }
 
     @Test
+    void secondReadyClosesTheConnectionWithOneAcceptOnly() {
+        final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20));
+        final ByteBuf flood = Unpooled.buffer();
+        for (int i = 0; i < 1000; i++) {
+            final ByteBuf ready = control(FstrmFrameDecoder.CONTROL_READY, FstrmFrameDecoder.DNSTAP_CONTENT_TYPE);
+            flood.writeBytes(ready);
+            ready.release();
+        }
+        ch.writeInbound(flood);
+        ch.runPendingTasks();
+        final ByteBuf accept = ch.readOutbound();
+        assertNotNull(accept, "the first READY is answered");
+        accept.release();
+        assertNull(ch.readOutbound(), "no ACCEPT for the following READY frames");
+        assertFalse(ch.isOpen(), "a second READY closes the connection");
+    }
+
+    @Test
     void waitsForIncompleteFrames() {
         final EmbeddedChannel ch = new EmbeddedChannel(new FstrmFrameDecoder(1 << 20));
         ch.writeInbound(Unpooled.wrappedBuffer(new byte[]{0, 0, 0, 5, 1, 2}));   // length 5, only 2 payload bytes

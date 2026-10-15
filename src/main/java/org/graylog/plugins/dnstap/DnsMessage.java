@@ -14,14 +14,16 @@ import java.util.List;
 
 /**
  * Minimal DNS wire-format (RFC 1035) parser for the header, the first question and, optionally, the answer
- * section; replaces the original plugin's dnsjava dependency. Malformed input, including compression pointer
- * loops, throws {@link MalformedDnstapException}.
+ * section or the EDNS OPT record (RFC 6891); replaces the original plugin's dnsjava dependency. Malformed input,
+ * including compression pointer loops, throws {@link MalformedDnstapException}.
  */
 final class DnsMessage {
     private static final int MAX_ANSWERS = 32;
     private static final int MAX_POINTER_JUMPS = 64;
     private static final int MAX_RDATA_TEXT = 256;
     private static final int MAX_NAME_TEXT = 1024;
+    private static final int TYPE_OPT = 41;
+    private static final int OPTION_CLIENT_SUBNET = 8;   // RFC 7871
 
     private static final int[] FLAG_BITS = {0x8000, 0x0400, 0x0200, 0x0100, 0x0080, 0x0020, 0x0010};
     private static final String[] FLAG_NAMES = {"qr", "aa", "tc", "rd", "ra", "ad", "cd"};
@@ -30,11 +32,17 @@ final class DnsMessage {
     int flags;
     int qdCount;
     int anCount;
+    private int nsCount;
+    private int arCount;
     // first question; null and -1 when the message has none
     String qname;
     int qtype = -1;
     int qclass = -1;
     List<String> answers = List.of();
+    // from the OPT record, read only with withEdns; -1 and false without a valid one
+    int ednsVersion = -1;
+    boolean dnssecOk;
+    boolean clientSubnet;
 
     private final byte[] b;
     private final int base;
@@ -53,6 +61,14 @@ final class DnsMessage {
      * {@code MAX_ANSWERS} answer records are formatted into {@link #answers} (never for UPDATE messages).
      */
     static DnsMessage parse(byte[] buf, int offset, int length, boolean withAnswers) {
+        return parse(buf, offset, length, withAnswers, false);
+    }
+
+    /**
+     * As {@link #parse(byte[], int, int, boolean)}; with {@code withEdns} (for queries, never together with
+     * {@code withAnswers}) the OPT record's version, DO bit and client subnet option are read as well.
+     */
+    static DnsMessage parse(byte[] buf, int offset, int length, boolean withAnswers, boolean withEdns) {
         if (length < 12) {
             throw new MalformedDnstapException("DNS message shorter than its header");
         }
@@ -61,8 +77,8 @@ final class DnsMessage {
         m.flags = m.u16();
         m.qdCount = m.u16();
         m.anCount = m.u16();
-        m.u16(); // nscount
-        m.u16(); // arcount
+        m.nsCount = m.u16();
+        m.arCount = m.u16();
         if (m.qdCount > 0) {
             m.qname = m.name();
             m.qtype = m.u16();
@@ -73,19 +89,90 @@ final class DnsMessage {
             // Further questions (qdcount > 1 is practically unused) are only walked to reach the answers, and only as
             // wire bytes: a sender can declare 65535 questions that all point at one long name, and decoding each
             // one made a single 400 KB frame cost ~150 ms.
-            for (int i = 1; i < m.qdCount; i++) {
-                m.skipName();
-                m.need(4);
-                m.pos += 4;
-            }
+            m.skipExtraQuestions();
             final int n = Math.min(m.anCount, MAX_ANSWERS);
             final List<String> answers = new ArrayList<>(n);
-            for (int i = 0; i < n; i++) {
-                answers.add(m.record());
+            try {
+                for (int i = 0; i < n; i++) {
+                    answers.add(m.record());
+                }
+            } catch (MalformedDnstapException ignored) {
+                // a broken record ends the answer list; the header, question and earlier answers are still good
             }
             m.answers = answers;
+        } else if (withEdns && m.arCount > 0) {
+            m.readEdns();
         }
         return m;
+    }
+
+    /**
+     * Reads the OPT record from the additional section. The records before it are skipped as wire bytes, like the
+     * extra questions in parse, so the cost stays linear in the message size. A malformed section only leaves the
+     * EDNS fields unset: they are optional, and the rest of the message is still good.
+     */
+    private void readEdns() {
+        try {
+            skipExtraQuestions();
+            for (int i = 0, n = anCount + nsCount; i < n; i++) {
+                skipRecord();
+            }
+            for (int i = 0; i < arCount; i++) {
+                skipName();
+                final int type = u16();
+                u16();                  // class: the requester's UDP payload size
+                final long ttl = u32(); // extended rcode (8 bits), version (8), flags (16)
+                final int rdlen = u16();
+                need(rdlen);
+                if (type == TYPE_OPT) {
+                    clientSubnet = hasOption(pos, rdlen, OPTION_CLIENT_SUBNET);
+                    dnssecOk = (ttl & 0x8000) != 0;
+                    ednsVersion = (int) (ttl >>> 16) & 0xFF;
+                    return;             // a message carries at most one OPT record
+                }
+                pos += rdlen;
+            }
+        } catch (MalformedDnstapException e) {
+            ednsVersion = -1;
+            dnssecOk = false;
+            clientSubnet = false;
+        }
+    }
+
+    /** Whether the OPT rdata in {@code b[at, at + len)} holds option {@code code}; a broken option ends the list. */
+    private boolean hasOption(int at, int len, int code) {
+        int p = at;
+        final int stop = at + len;
+        while (stop - p >= 4) {
+            final int optCode = (b[p] & 0xFF) << 8 | (b[p + 1] & 0xFF);
+            final int optLen = (b[p + 2] & 0xFF) << 8 | (b[p + 3] & 0xFF);
+            if (p + 4 + optLen > stop) {
+                return false;
+            }
+            if (optCode == code) {
+                return true;
+            }
+            p += 4 + optLen;
+        }
+        return false;
+    }
+
+    /** Skips the questions after the first, which are practically unused, as wire bytes. */
+    private void skipExtraQuestions() {
+        for (int i = 1; i < qdCount; i++) {
+            skipName();
+            need(4);
+            pos += 4;
+        }
+    }
+
+    private void skipRecord() {
+        skipName();
+        need(10);
+        pos += 8;                       // type, class, ttl
+        final int rdlen = u16();
+        need(rdlen);
+        pos += rdlen;
     }
 
     int opcode() {
@@ -130,7 +217,6 @@ final class DnsMessage {
         return v;
     }
 
-    /** Reads the (possibly compressed) name at pos and advances pos past it; see {@link #nameAt}. */
     /** Advances pos past the name at pos without decoding it: a compression pointer ends the name on the wire. */
     private void skipName() {
         while (true) {
@@ -153,6 +239,7 @@ final class DnsMessage {
         }
     }
 
+    /** Reads the (possibly compressed) name at pos and advances pos past it; see {@link #nameAt}. */
     private String name() {
         final int[] p = {pos};
         final String n = nameAt(p);
@@ -260,7 +347,7 @@ final class DnsMessage {
         };
         pos = rdStart + rdlen;
         // capped: the joined answers go into a keyword field, and OpenSearch rejects terms over 32766 bytes
-        return typeName(type) + " " + (data.length() > MAX_RDATA_TEXT ? data.substring(0, MAX_RDATA_TEXT) + "..." : data);
+        return typeName(type) + " " + (data.length() > MAX_RDATA_TEXT ? Text.cut(data, MAX_RDATA_TEXT) + "..." : data);
     }
 
     private String ip(int at, int len) {

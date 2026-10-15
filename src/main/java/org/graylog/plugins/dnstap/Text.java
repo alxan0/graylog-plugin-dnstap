@@ -50,6 +50,14 @@ final class Text {
         sb.append('"');
     }
 
+    /** {@code s} cut to at most {@code max} characters, never between the two halves of a surrogate pair. */
+    static String cut(String s, int max) {
+        if (s.length() <= max) {
+            return s;
+        }
+        return s.substring(0, Character.isHighSurrogate(s.charAt(max - 1)) ? max - 1 : max);
+    }
+
     private static boolean needsEscape(char c) {
         return c < 0x20 || (c >= 0x7F && c <= 0x9F) || c == '\u2028' || c == '\u2029';
     }

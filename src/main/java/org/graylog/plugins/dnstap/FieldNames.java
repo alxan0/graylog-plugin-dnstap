@@ -30,8 +30,8 @@ import java.util.stream.Collectors;
  * Names of the message fields the codec writes.
  * <p>
  * The defaults can be renamed per Graylog node with {@value #FILE_NAME} next to the plugin jar, one
- * {@code default_name = new_name} per line. The file is read when a Dnstap input starts (and, before that, when the
- * first message is decoded), so a change applies after restarting the input. A file with any problem (an unknown or
+ * {@code default_name = new_name} per line. The file is read when a Dnstap input starts (or when the first message is
+ * decoded, if that comes first), so a change applies after restarting the input. A file with any problem (an unknown or
  * repeated field, an invalid or reserved name, two fields with the same name, not a regular file, more than
  * {@value #MAX_FILE_BYTES} bytes, not UTF-8) is ignored as a whole: its problems are logged and the default names apply.
  * <p>
@@ -74,6 +74,10 @@ final class FieldNames {
         QNAME("dns_query_name"),
         QTYPE("dns_query_type"),
         QCLASS("qclass"),
+        EDNS("dns_edns"),
+        EDNS_VERSION("dns_edns_version"),
+        DO_BIT("dns_do_bit"),
+        ECS("dns_ecs"),
         RCODE("rcode"),
         ANSWER_COUNT("answer_count"),
         ANSWERS("answers"),
@@ -111,7 +115,7 @@ final class FieldNames {
         return reload(pluginDirectoryFile());
     }
 
-    /** Uses the names from {@code file}, or the defaults when it is null or missing. */
+    /** Uses the names from {@code file}, or the defaults when it is null, missing or invalid. */
     static synchronized FieldNames reload(Path file) {
         final FieldNames n = file == null ? DEFAULTS : load(file);
         current = n;

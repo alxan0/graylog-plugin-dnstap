@@ -7,7 +7,7 @@ answers and latency.
 Compared with sending BIND's query log over syslog, dnstap uses about half the CPU on the DNS server. With the relay
 settings below, it also survives a Graylog restart almost without losing events.
 
-Tested with Graylog 7.1.10 and BIND 9.20 on Debian 13.
+Tested with Graylog 7.1.10 and 7.2.0, and BIND 9.20 on Debian 13.
 
 ## How it works
 
@@ -27,8 +27,8 @@ named -> /run/named/dnstap.sock -> socat (TLS) -> Graylog Dnstap input :6000
    installs, `/usr/share/graylog/plugin/` in Docker) and restart Graylog. Keep only one version of the jar there.
 3. Create the input under System > Inputs > *Dnstap (Frame Streams/TCP)*, port 6000. For TLS, set the server
    certificate and key, and set *TLS client authentication* to *required* with your CA as trusted certs.
-   [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) can be used to create one CA cert, plus the server and client
-   certificates.
+   If you have no CA, [`contrib/make-dnstap-pki.sh`](contrib/make-dnstap-pki.sh) creates one, plus the server and
+   client certificates.
 
 **BIND**
 
@@ -59,8 +59,9 @@ arrives. Fields, settings, metrics and outage behaviour are covered in [docs/ref
 ## Usage
 
 Each dnstap event becomes a Graylog message with fields such as `dns_client_ip`, `dns_query_name`, `dns_query_type`,
-`rcode` and `answers` (full list in [docs/reference.md](docs/reference.md#fields)). Every message also has
-`dnstap: true`, so pipeline rules can select dnstap messages with `has_field("dnstap")`.
+`rcode`, `answers` and, for queries, their EDNS data (`dns_edns`, `dns_do_bit`, ...). The full list is in
+[docs/reference.md](docs/reference.md#fields). Every message also has `dnstap: true`, so pipeline rules can select
+dnstap messages with `has_field("dnstap")`.
 
 To use other field names, create `dnstap-fields.conf` in the plugin directory, next to the jar, with one
 `default_name = new_name` per line. Then restart the input; in Docker, restart the container, because the image
@@ -97,7 +98,7 @@ Sergey I. Yarkin, which was written for Graylog 2.x and no longer loads on curre
 
 The port to the Graylog 7.1 plugin API, and the testing behind it, was done with the help of Claude.
 
-It isn't affiliated with Graylog, Inc. or ISC.
+This plugin isn't affiliated with Graylog, Inc. or ISC.
 
 ## License
 

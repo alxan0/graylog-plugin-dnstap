@@ -93,7 +93,7 @@ class FuzzTest {
     }
 
     @Test
-    void hostileDnsMessagesAreRejected() {
+    void hostileDnsMessages() {
         final DnstapCodec c = codec();
         // DNS header (qdcount=1), then a question name that is a compression pointer to itself (offset 12)
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd0100000100000000000" + "0" + "c00c00010001")), "self pointer"), "self pointer");
@@ -103,11 +103,12 @@ class FuzzTest {
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd01000001000000000000" + "3f616263")), "label overflow"), "label overflow");
         // header only, qdcount=65535
         assertEquals("REJECTED", decodeChecked(c, dnstapWithQuery(hex("abcd0100ffff000000000000")), "qdcount without questions"), "qdcount without questions");
+        // a broken answer only ends the answer list: the message keeps its header and question
         // response with an MX answer whose rdata is shorter than the preference field
-        assertEquals("REJECTED", decodeChecked(c, dnstapWithResponse(hex(
+        assertEquals("OK", decodeChecked(c, dnstapWithResponse(hex(
                 "abcd81800001000100000000" + "03777777" + "00" + "00010001" + "c00c000f0001000000010001" + "00")), "short MX rdata"), "short MX rdata");
         // response with ancount 1 and no answer bytes
-        assertEquals("REJECTED", decodeChecked(c, dnstapWithResponse(hex("abcd818000010001000000000377777700000100 01".replace(" ", ""))), "missing answer"), "missing answer");
+        assertEquals("OK", decodeChecked(c, dnstapWithResponse(hex("abcd818000010001000000000377777700000100 01".replace(" ", ""))), "missing answer"), "missing answer");
     }
 
     @Test
